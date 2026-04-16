@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code (local/user-scoped)
+.claude/settings.local.json
+
+# Compound Engineering (machine-local config)
+.compound-engineering/*.local.yaml
+
+# Plugin-local test state (atomic-write tmp files, error logs, caches)
+*.tmp
+*.log
+.cache/
+
+# Node (defensive — we don't currently use Node, but future tooling may)
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test output
+coverage/
+tests/output/
