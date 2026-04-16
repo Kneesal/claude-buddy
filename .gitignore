@@ -27,6 +27,9 @@ node_modules/
 .env.local
 .env.*.local
 
+# Test infrastructure (installed, not committed)
+tests/bats-core/
+
 # Test output
 coverage/
 tests/output/
