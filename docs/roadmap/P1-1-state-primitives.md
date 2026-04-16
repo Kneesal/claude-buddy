@@ -2,7 +2,7 @@
 id: P1-1
 title: State primitives (atomic I/O, flock, schema)
 phase: P1
-status: todo
+status: done
 depends_on: [P0]
 origin_plan: docs/plans/2026-04-16-001-feat-claude-buddy-plugin-plan.md
 ---
