@@ -209,3 +209,82 @@ buddy_save() {
   # Release lock
   exec {lock_fd}>&-
 }
+
+# --- Session state (per-sessionId, no locking) ---
+
+# Load session state for a given session ID.
+# Outputs JSON content or an empty default if the session file doesn't exist.
+# Always returns 0.
+session_load() {
+  local session_id="${1:?session_load requires a session_id argument}"
+
+  local data_dir
+  data_dir="$(_state_data_dir)" || {
+    echo '{}'
+    return 0
+  }
+
+  local session_file="$data_dir/session-${session_id}.json"
+
+  if [[ ! -f "$session_file" ]]; then
+    echo '{}'
+    return 0
+  fi
+
+  local json
+  if json="$(jq '.' "$session_file" 2>/dev/null)" && [[ -n "$json" && "$json" != "null" ]]; then
+    printf '%s' "$json"
+  else
+    _state_log "session_load: failed to parse $session_file, returning default"
+    echo '{}'
+  fi
+  return 0
+}
+
+# Save session state for a given session ID.
+# Reads JSON content from stdin.
+# No flock (single writer per session). No atomic rename (ephemeral data).
+# Returns 0 on success, 1 on failure.
+session_save() {
+  local session_id="${1:?session_save requires a session_id argument}"
+
+  local data_dir
+  data_dir="$(_state_data_dir)" || {
+    _state_log "session_save: CLAUDE_PLUGIN_DATA not set"
+    return 1
+  }
+
+  if ! mkdir -p "$data_dir" 2>/dev/null; then
+    _state_log "session_save: failed to create $data_dir"
+    return 1
+  fi
+
+  local session_file="$data_dir/session-${session_id}.json"
+
+  if ! cat > "$session_file"; then
+    _state_log "session_save: failed to write $session_file"
+    return 1
+  fi
+}
+
+# --- Orphan cleanup ---
+
+# Remove stale temp files and session files older than 1 hour.
+# Called by P3-1's session-start.sh — not invoked directly by state.sh.
+# Always returns 0.
+state_cleanup_orphans() {
+  local data_dir
+  data_dir="$(_state_data_dir)" || return 0
+
+  if [[ ! -d "$data_dir" ]]; then
+    return 0
+  fi
+
+  # Remove .tmp files older than 60 minutes
+  find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin +60 -delete 2>/dev/null || true
+
+  # Remove stale session files older than 60 minutes
+  find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin +60 -delete 2>/dev/null || true
+
+  return 0
+}
