@@ -17,6 +17,17 @@
 # the CLAUDE.md "hooks must exit 0" contract. Error handling is explicit
 # per-function instead.
 
+# Require bash 4.1+ for the `exec {fd}>file` automatic-fd-assignment syntax
+# used in buddy_save's flock acquisition. On bash 3.x (macOS system bash),
+# that syntax silently creates a file named literally `{lock_fd}` and leaves
+# the fd variable unset — buddy_save would run WITHOUT holding the lock.
+# Fail loudly at source time rather than silently corrupt state.
+if [[ -z "${BASH_VERSINFO[0]:-}" ]] || (( BASH_VERSINFO[0] < 4 )) || \
+   (( BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 1 )); then
+  echo "buddy-state: requires bash 4.1+ (got ${BASH_VERSION:-unknown}). On macOS, install via: brew install bash" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 # Guard against re-sourcing — readonly variables would error on re-declaration.
 if [[ "${_STATE_SH_LOADED:-}" != "1" ]]; then
   _STATE_SH_LOADED=1
@@ -58,6 +69,24 @@ _state_log_once() {
 _state_valid_session_id() {
   local id="$1"
   [[ -n "$id" && "$id" =~ ^[A-Za-z0-9_-]+$ ]]
+}
+
+# Ensure CLAUDE_PLUGIN_DATA is set and the directory exists.
+# Outputs the data_dir on success; logs and returns 1 on failure.
+# The caller's name is used in error messages so the caller can say
+# `buddy_save: ...` etc.
+_state_ensure_dir() {
+  local caller="$1"
+  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
+  if [[ -z "$data_dir" ]]; then
+    _state_log "${caller}: CLAUDE_PLUGIN_DATA not set"
+    return 1
+  fi
+  if ! mkdir -p "$data_dir" 2>/dev/null; then
+    _state_log "${caller}: failed to create $data_dir"
+    return 1
+  fi
+  printf '%s' "$data_dir"
 }
 
 # --- Schema migration ---
@@ -189,16 +218,8 @@ buddy_load() {
 # belonging to live processes, avoiding a race with in-flight writes.
 # Returns 0 on success, 1 on failure.
 buddy_save() {
-  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
-  if [[ -z "$data_dir" ]]; then
-    _state_log "buddy_save: CLAUDE_PLUGIN_DATA not set"
-    return 1
-  fi
-
-  if ! mkdir -p "$data_dir" 2>/dev/null; then
-    _state_log "buddy_save: failed to create $data_dir"
-    return 1
-  fi
+  local data_dir
+  data_dir="$(_state_ensure_dir "buddy_save")" || return 1
 
   local buddy_file="$data_dir/buddy.json"
   local lock_file="$data_dir/buddy.json.lock"
@@ -298,16 +319,8 @@ session_save() {
     return 1
   fi
 
-  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
-  if [[ -z "$data_dir" ]]; then
-    _state_log "session_save: CLAUDE_PLUGIN_DATA not set"
-    return 1
-  fi
-
-  if ! mkdir -p "$data_dir" 2>/dev/null; then
-    _state_log "session_save: failed to create $data_dir"
-    return 1
-  fi
+  local data_dir
+  data_dir="$(_state_ensure_dir "session_save")" || return 1
 
   local session_file="$data_dir/session-${session_id}.json"
 
