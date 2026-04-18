@@ -5,58 +5,93 @@
 #
 # Sentinels (returned by buddy_load):
 #   NO_BUDDY        — file does not exist (fresh install or post-reset)
-#   CORRUPT         — file exists but is unparseable or missing schemaVersion
+#   CORRUPT         — file exists but is unparseable or missing/invalid schemaVersion
 #   FUTURE_VERSION  — schemaVersion is higher than this code supports
 #
 # All functions use ${CLAUDE_PLUGIN_DATA} as the data directory.
-# All error paths log to stderr and return non-zero. No function ever exits
+# All error paths log to stderr and return non-zero. No function ever crashes
 # the calling script — callers check return values and sentinels.
+#
+# NOTE: This library does NOT set `set -euo pipefail` at module scope.
+# Doing so would pollute any hook script that sources this library and break
+# the CLAUDE.md "hooks must exit 0" contract. Error handling is explicit
+# per-function instead.
 
-set -euo pipefail
+# Guard against re-sourcing — readonly variables would error on re-declaration.
+if [[ "${_STATE_SH_LOADED:-}" != "1" ]]; then
+  _STATE_SH_LOADED=1
 
-readonly CURRENT_SCHEMA_VERSION=1
-readonly FLOCK_TIMEOUT=0.2
+  readonly CURRENT_SCHEMA_VERSION=1
+  readonly FLOCK_TIMEOUT=0.2
+  readonly ORPHAN_MAX_AGE_MINUTES=60
+  readonly MIGRATE_MAX_ITERATIONS=32
 
-# Sentinels — callers compare against these
-readonly STATE_NO_BUDDY="NO_BUDDY"
-readonly STATE_CORRUPT="CORRUPT"
-readonly STATE_FUTURE_VERSION="FUTURE_VERSION"
+  # Sentinels — callers compare against these
+  readonly STATE_NO_BUDDY="NO_BUDDY"
+  readonly STATE_CORRUPT="CORRUPT"
+  readonly STATE_FUTURE_VERSION="FUTURE_VERSION"
+fi
 
 # --- Internal helpers ---
 
-_state_data_dir() {
-  if [[ -z "${CLAUDE_PLUGIN_DATA:-}" ]]; then
-    return 1
-  fi
-  printf '%s' "$CLAUDE_PLUGIN_DATA"
-}
-
 _state_log() {
   echo "buddy-state: $*" >&2
+}
+
+# Log a warning once per process. Later calls with the same key are silent.
+# Prevents stderr flooding when status line or repeated hooks hit a stable
+# CORRUPT/FUTURE_VERSION state.
+_state_warned_keys=""
+_state_log_once() {
+  local key="$1"
+  shift
+  case ":$_state_warned_keys:" in
+    *":$key:"*) return 0 ;;
+  esac
+  _state_warned_keys="${_state_warned_keys}:${key}"
+  _state_log "$@"
+}
+
+# Validate a session_id against path-traversal and shell-injection.
+# Allowed: letters, digits, hyphen, underscore. No slashes, no dots.
+# Returns 0 if valid, 1 otherwise.
+_state_valid_session_id() {
+  local id="$1"
+  [[ -n "$id" && "$id" =~ ^[A-Za-z0-9_-]+$ ]]
 }
 
 # --- Schema migration ---
 
 # Migrate JSON from its current schemaVersion to CURRENT_SCHEMA_VERSION.
 # Reads JSON from stdin, writes migrated JSON to stdout.
-# Returns 0 on success, 1 on failure.
+# Returns 0 on success, 1 on failure (including infinite-loop protection).
 # Migration happens in memory — the caller decides whether to persist.
-migrate() {
+#
+# IMPORTANT for future authors: each case arm MUST bump .schemaVersion in its
+# jq filter, otherwise the while loop cannot advance. The iteration cap below
+# is a safety net, not a license to skip the version bump.
+_state_migrate() {
   local json
   json="$(cat)"
 
   local version
-  version="$(printf '%s' "$json" | jq -r '.schemaVersion // empty')"
+  version="$(printf '%s' "$json" | jq -r '.schemaVersion // empty' 2>/dev/null)"
 
-  if [[ -z "$version" ]]; then
-    _state_log "migrate: missing schemaVersion"
+  if ! [[ "$version" =~ ^[0-9]+$ ]]; then
+    _state_log "migrate: invalid or missing schemaVersion"
     return 1
   fi
 
-  while [[ "$version" -lt "$CURRENT_SCHEMA_VERSION" ]]; do
+  local iterations=0
+  while (( version < CURRENT_SCHEMA_VERSION )); do
+    if (( ++iterations > MIGRATE_MAX_ITERATIONS )); then
+      _state_log "migrate: exceeded max iterations ($MIGRATE_MAX_ITERATIONS) — case arm likely forgot to bump .schemaVersion"
+      return 1
+    fi
+
     case "$version" in
       # v1 is current — no migrations needed yet.
-      # Future migrations go here:
+      # Future migrations go here. Each arm MUST set .schemaVersion in its filter:
       # 1)
       #   json="$(printf '%s' "$json" | jq '.schemaVersion = 2 | .newField //= "default"')"
       #   ;;
@@ -65,7 +100,12 @@ migrate() {
         return 1
         ;;
     esac
-    version="$(printf '%s' "$json" | jq -r '.schemaVersion')"
+
+    version="$(printf '%s' "$json" | jq -r '.schemaVersion' 2>/dev/null)"
+    if ! [[ "$version" =~ ^[0-9]+$ ]]; then
+      _state_log "migrate: case arm produced invalid schemaVersion"
+      return 1
+    fi
   done
 
   printf '%s' "$json"
@@ -79,11 +119,11 @@ migrate() {
 #   - A sentinel string: NO_BUDDY, CORRUPT, or FUTURE_VERSION
 # Always returns 0 — callers check the output string against the sentinel constants.
 buddy_load() {
-  local data_dir
-  data_dir="$(_state_data_dir)" || {
+  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
+  if [[ -z "$data_dir" ]]; then
     printf '%s' "$STATE_NO_BUDDY"
     return 0
-  }
+  fi
 
   local buddy_file="$data_dir/buddy.json"
 
@@ -95,42 +135,42 @@ buddy_load() {
   # Parse JSON
   local json
   if ! json="$(jq '.' "$buddy_file" 2>/dev/null)"; then
-    _state_log "buddy_load: failed to parse $buddy_file"
+    _state_log_once "corrupt:$buddy_file" "buddy_load: failed to parse $buddy_file"
     printf '%s' "$STATE_CORRUPT"
     return 0
   fi
 
   # Empty or null result from jq
   if [[ -z "$json" || "$json" == "null" ]]; then
-    _state_log "buddy_load: empty or null content in $buddy_file"
+    _state_log_once "corrupt:$buddy_file" "buddy_load: empty or null content in $buddy_file"
     printf '%s' "$STATE_CORRUPT"
     return 0
   fi
 
-  # Check schemaVersion
+  # Check schemaVersion — must be a non-negative integer
   local version
-  version="$(printf '%s' "$json" | jq -r '.schemaVersion // empty')"
+  version="$(printf '%s' "$json" | jq -r '.schemaVersion // empty' 2>/dev/null)"
 
-  if [[ -z "$version" ]]; then
-    _state_log "buddy_load: missing schemaVersion in $buddy_file"
+  if ! [[ "$version" =~ ^[0-9]+$ ]]; then
+    _state_log_once "corrupt:$buddy_file" "buddy_load: invalid or missing schemaVersion in $buddy_file"
     printf '%s' "$STATE_CORRUPT"
     return 0
   fi
 
   # Future version check
-  if [[ "$version" -gt "$CURRENT_SCHEMA_VERSION" ]]; then
-    _state_log "buddy_load: state is from a newer plugin version (v$version > v$CURRENT_SCHEMA_VERSION). Update the plugin or run /buddy:hatch to start fresh."
+  if (( version > CURRENT_SCHEMA_VERSION )); then
+    _state_log_once "future:$buddy_file" "buddy_load: state is from a newer plugin version (v$version > v$CURRENT_SCHEMA_VERSION). Update the plugin or run /buddy:hatch to start fresh."
     printf '%s' "$STATE_FUTURE_VERSION"
     return 0
   fi
 
   # Migrate if needed (in memory only — not written back)
-  if [[ "$version" -lt "$CURRENT_SCHEMA_VERSION" ]]; then
+  if (( version < CURRENT_SCHEMA_VERSION )); then
     local migrated
-    if migrated="$(printf '%s' "$json" | migrate)"; then
+    if migrated="$(printf '%s' "$json" | _state_migrate)"; then
       json="$migrated"
     else
-      _state_log "buddy_load: migration failed from v$version"
+      _state_log_once "corrupt:$buddy_file" "buddy_load: migration failed from v$version"
       printf '%s' "$STATE_CORRUPT"
       return 0
     fi
@@ -145,15 +185,16 @@ buddy_load() {
 # Stamps schemaVersion on every write.
 # Uses flock on buddy.json.lock for concurrency safety.
 # Uses tmp+rename for atomic writes.
+# .tmp files are named with PID so state_cleanup_orphans can skip files
+# belonging to live processes, avoiding a race with in-flight writes.
 # Returns 0 on success, 1 on failure.
 buddy_save() {
-  local data_dir
-  data_dir="$(_state_data_dir)" || {
+  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
+  if [[ -z "$data_dir" ]]; then
     _state_log "buddy_save: CLAUDE_PLUGIN_DATA not set"
     return 1
-  }
+  fi
 
-  # Ensure data directory exists
   if ! mkdir -p "$data_dir" 2>/dev/null; then
     _state_log "buddy_save: failed to create $data_dir"
     return 1
@@ -164,17 +205,17 @@ buddy_save() {
 
   # Read content from stdin and stamp schemaVersion
   local content
-  content="$(jq --argjson v "$CURRENT_SCHEMA_VERSION" '.schemaVersion = $v' 2>/dev/null)" || {
+  if ! content="$(jq --argjson v "$CURRENT_SCHEMA_VERSION" '.schemaVersion = $v' 2>/dev/null)"; then
     _state_log "buddy_save: invalid JSON input"
     return 1
-  }
+  fi
 
-  # Acquire flock using exec-based fd (portable, no subshell needed)
+  # Acquire flock using exec-based fd
   local lock_fd
-  exec {lock_fd}>"$lock_file" || {
+  if ! exec {lock_fd}>"$lock_file"; then
     _state_log "buddy_save: failed to open lock file"
     return 1
-  }
+  fi
 
   if ! flock -x -w "$FLOCK_TIMEOUT" "$lock_fd"; then
     exec {lock_fd}>&-
@@ -182,15 +223,14 @@ buddy_save() {
     return 1
   fi
 
-  # Create temp file in the same directory (same-filesystem guarantee)
+  # Create temp file named with PID so cleanup can identify live writers.
   local tmp
-  tmp="$(mktemp "$data_dir/.tmp.XXXXXX")" || {
+  if ! tmp="$(mktemp "$data_dir/.tmp.$$.XXXXXX")"; then
     exec {lock_fd}>&-
     _state_log "buddy_save: failed to create temp file"
     return 1
-  }
+  fi
 
-  # Write content to temp file, clean up on failure
   if ! printf '%s\n' "$content" > "$tmp"; then
     rm -f "$tmp"
     exec {lock_fd}>&-
@@ -198,7 +238,6 @@ buddy_save() {
     return 1
   fi
 
-  # Atomic rename
   if ! mv -f "$tmp" "$buddy_file"; then
     rm -f "$tmp"
     exec {lock_fd}>&-
@@ -206,23 +245,28 @@ buddy_save() {
     return 1
   fi
 
-  # Release lock
   exec {lock_fd}>&-
+  return 0
 }
 
-# --- Session state (per-sessionId, no locking) ---
+# --- Session state (per-sessionId) ---
 
 # Load session state for a given session ID.
-# Outputs JSON content or an empty default if the session file doesn't exist.
-# Always returns 0.
+# Outputs JSON content or '{}' if the file is missing, unreadable, or corrupt.
+# Always returns 0 for valid session IDs. Returns 1 with '{}' on invalid IDs.
 session_load() {
-  local session_id="${1:?session_load requires a session_id argument}"
+  local session_id="${1:-}"
+  if ! _state_valid_session_id "$session_id"; then
+    _state_log "session_load: invalid session_id"
+    echo '{}'
+    return 1
+  fi
 
-  local data_dir
-  data_dir="$(_state_data_dir)" || {
+  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
+  if [[ -z "$data_dir" ]]; then
     echo '{}'
     return 0
-  }
+  fi
 
   local session_file="$data_dir/session-${session_id}.json"
 
@@ -235,7 +279,7 @@ session_load() {
   if json="$(jq '.' "$session_file" 2>/dev/null)" && [[ -n "$json" && "$json" != "null" ]]; then
     printf '%s' "$json"
   else
-    _state_log "session_load: failed to parse $session_file, returning default"
+    _state_log_once "corrupt-session:$session_id" "session_load: failed to parse $session_file, returning default"
     echo '{}'
   fi
   return 0
@@ -243,16 +287,22 @@ session_load() {
 
 # Save session state for a given session ID.
 # Reads JSON content from stdin.
-# No flock (single writer per session). No atomic rename (ephemeral data).
+# Uses tmp+rename for atomic writes (prevents concurrent-writer corruption
+# within the same session_id). No flock — rename atomicity is sufficient
+# for the ephemeral, typically-single-writer case.
 # Returns 0 on success, 1 on failure.
 session_save() {
-  local session_id="${1:?session_save requires a session_id argument}"
+  local session_id="${1:-}"
+  if ! _state_valid_session_id "$session_id"; then
+    _state_log "session_save: invalid session_id"
+    return 1
+  fi
 
-  local data_dir
-  data_dir="$(_state_data_dir)" || {
+  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
+  if [[ -z "$data_dir" ]]; then
     _state_log "session_save: CLAUDE_PLUGIN_DATA not set"
     return 1
-  }
+  fi
 
   if ! mkdir -p "$data_dir" 2>/dev/null; then
     _state_log "session_save: failed to create $data_dir"
@@ -261,30 +311,54 @@ session_save() {
 
   local session_file="$data_dir/session-${session_id}.json"
 
-  if ! cat > "$session_file"; then
-    _state_log "session_save: failed to write $session_file"
+  local tmp
+  if ! tmp="$(mktemp "$data_dir/.tmp.$$.XXXXXX")"; then
+    _state_log "session_save: failed to create temp file"
     return 1
   fi
+
+  if ! cat > "$tmp"; then
+    rm -f "$tmp"
+    _state_log "session_save: failed to write temp file"
+    return 1
+  fi
+
+  if ! mv -f "$tmp" "$session_file"; then
+    rm -f "$tmp"
+    _state_log "session_save: failed to rename temp to $session_file"
+    return 1
+  fi
+
+  return 0
 }
 
 # --- Orphan cleanup ---
 
-# Remove stale temp files and session files older than 1 hour.
+# Remove stale temp files and session files older than ORPHAN_MAX_AGE_MINUTES.
+# Skips .tmp files whose embedded PID is still a live process (avoids racing
+# with in-flight buddy_save/session_save). Never removes buddy.json or
+# buddy.json.lock.
 # Called by P3-1's session-start.sh — not invoked directly by state.sh.
 # Always returns 0.
 state_cleanup_orphans() {
-  local data_dir
-  data_dir="$(_state_data_dir)" || return 0
-
-  if [[ ! -d "$data_dir" ]]; then
+  local data_dir="${CLAUDE_PLUGIN_DATA:-}"
+  if [[ -z "$data_dir" || ! -d "$data_dir" ]]; then
     return 0
   fi
 
-  # Remove .tmp files older than 60 minutes
-  find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin +60 -delete 2>/dev/null || true
+  # Remove old .tmp files whose owning PID is no longer running
+  local tmp_file pid
+  while IFS= read -r tmp_file; do
+    # Extract PID from filename: .tmp.<pid>.<suffix>
+    pid="$(basename "$tmp_file" | awk -F. '{print $3}')"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    rm -f "$tmp_file"
+  done < <(find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin "+$ORPHAN_MAX_AGE_MINUTES" 2>/dev/null)
 
-  # Remove stale session files older than 60 minutes
-  find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin +60 -delete 2>/dev/null || true
+  # Remove stale session files
+  find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin "+$ORPHAN_MAX_AGE_MINUTES" -delete 2>/dev/null || true
 
   return 0
 }
