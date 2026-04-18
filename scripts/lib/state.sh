@@ -28,19 +28,39 @@ if [[ -z "${BASH_VERSINFO[0]:-}" ]] || (( BASH_VERSINFO[0] < 4 )) || \
   return 1 2>/dev/null || exit 1
 fi
 
-# Guard against re-sourcing — readonly variables would error on re-declaration.
+# Guard against re-sourcing — readonly variables and the dedup accumulator
+# both belong here. Anything that must survive re-source in the same process
+# goes inside this block.
 if [[ "${_STATE_SH_LOADED:-}" != "1" ]]; then
   _STATE_SH_LOADED=1
 
   readonly CURRENT_SCHEMA_VERSION=1
   readonly FLOCK_TIMEOUT=0.2
+
+  # PID-aware cleanup keeps .tmp files as long as their owning process is alive.
+  # ORPHAN_HARD_AGE_MINUTES is an unconditional upper bound to bound PID-reuse
+  # false positives (a dead writer's PID may be recycled by an unrelated
+  # long-lived process; without a hard cap the file would never be cleaned).
   readonly ORPHAN_MAX_AGE_MINUTES=60
+  readonly ORPHAN_HARD_AGE_MINUTES=$((24 * 60))
+
+  # Safety net for _state_migrate — the real requirement is that each migration
+  # case arm bump .schemaVersion. This cap catches bugs, not normal operation.
   readonly MIGRATE_MAX_ITERATIONS=32
+
+  # Max session_id length — keeps session-<id>.json comfortably under NAME_MAX=255
+  # and prevents pathological IDs from passing the character-class regex.
+  readonly SESSION_ID_MAX_LEN=128
 
   # Sentinels — callers compare against these
   readonly STATE_NO_BUDDY="NO_BUDDY"
   readonly STATE_CORRUPT="CORRUPT"
   readonly STATE_FUTURE_VERSION="FUTURE_VERSION"
+
+  # Per-process one-time warning dedup. Associative array is safer than a
+  # colon-joined string — no separator collisions with keys that contain `:`.
+  # Declared global with `-gA` so it survives function-local scope.
+  declare -gA _state_warned_keys=()
 fi
 
 # --- Internal helpers ---
@@ -52,26 +72,28 @@ _state_log() {
 # Log a warning once per process. Later calls with the same key are silent.
 # Prevents stderr flooding when status line or repeated hooks hit a stable
 # CORRUPT/FUTURE_VERSION state.
-_state_warned_keys=""
 _state_log_once() {
   local key="$1"
   shift
-  case ":$_state_warned_keys:" in
-    *":$key:"*) return 0 ;;
-  esac
-  _state_warned_keys="${_state_warned_keys}:${key}"
+  if [[ -v _state_warned_keys[$key] ]]; then
+    return 0
+  fi
+  _state_warned_keys[$key]=1
   _state_log "$@"
 }
 
 # Validate a session_id against path-traversal and shell-injection.
 # Allowed: letters, digits, hyphen, underscore. No slashes, no dots.
+# Max length SESSION_ID_MAX_LEN to keep session-<id>.json under NAME_MAX=255.
 # Returns 0 if valid, 1 otherwise.
 _state_valid_session_id() {
   local id="$1"
-  [[ -n "$id" && "$id" =~ ^[A-Za-z0-9_-]+$ ]]
+  [[ -n "$id" \
+    && "${#id}" -le "$SESSION_ID_MAX_LEN" \
+    && "$id" =~ ^[A-Za-z0-9_-]+$ ]]
 }
 
-# Ensure CLAUDE_PLUGIN_DATA is set and the directory exists.
+# Ensure CLAUDE_PLUGIN_DATA is set, the directory exists, and it is writable.
 # Outputs the data_dir on success; logs and returns 1 on failure.
 # The caller's name is used in error messages so the caller can say
 # `buddy_save: ...` etc.
@@ -84,6 +106,12 @@ _state_ensure_dir() {
   fi
   if ! mkdir -p "$data_dir" 2>/dev/null; then
     _state_log "${caller}: failed to create $data_dir"
+    return 1
+  fi
+  # mkdir -p succeeds on an existing dir even if unwritable — check explicitly
+  # so callers see the real cause instead of a downstream open/write failure.
+  if [[ ! -w "$data_dir" ]]; then
+    _state_log "${caller}: $data_dir is not writable"
     return 1
   fi
   printf '%s' "$data_dir"
@@ -230,6 +258,20 @@ buddy_save() {
     _state_log "buddy_save: invalid JSON input"
     return 1
   fi
+  # Empty stdin produces empty jq output — reject explicitly so callers don't
+  # silently corrupt buddy.json with a blank file.
+  if [[ -z "$content" ]]; then
+    _state_log "buddy_save: empty stdin"
+    return 1
+  fi
+
+  # Reject symlinked lock file. Opening a symlinked regular file with
+  # exec {fd}>file would truncate the target (O_TRUNC); a FIFO symlink would
+  # hang indefinitely before flock's timeout could help. Neither is safe.
+  if [[ -L "$lock_file" ]]; then
+    _state_log "buddy_save: refusing to open symlinked lock file $lock_file"
+    return 1
+  fi
 
   # Acquire flock using exec-based fd
   local lock_fd
@@ -347,10 +389,15 @@ session_save() {
 
 # --- Orphan cleanup ---
 
-# Remove stale temp files and session files older than ORPHAN_MAX_AGE_MINUTES.
-# Skips .tmp files whose embedded PID is still a live process (avoids racing
-# with in-flight buddy_save/session_save). Never removes buddy.json or
-# buddy.json.lock.
+# Remove stale temp files and session files. Two-pass approach for .tmp files:
+#   1. PID-aware pass: .tmp files older than ORPHAN_MAX_AGE_MINUTES are removed
+#      UNLESS their embedded PID is still a live process (avoids racing with
+#      in-flight buddy_save/session_save).
+#   2. Hard-age pass: .tmp files older than ORPHAN_HARD_AGE_MINUTES are removed
+#      unconditionally. This bounds PID-reuse false positives — if a dead
+#      writer's PID gets recycled by a long-lived unrelated process, pass 1
+#      would skip the file indefinitely.
+# Never removes buddy.json or buddy.json.lock.
 # Called by P3-1's session-start.sh — not invoked directly by state.sh.
 # Always returns 0.
 state_cleanup_orphans() {
@@ -359,7 +406,7 @@ state_cleanup_orphans() {
     return 0
   fi
 
-  # Remove old .tmp files whose owning PID is no longer running
+  # Pass 1: PID-aware cleanup of old .tmp files
   local tmp_file pid
   while IFS= read -r tmp_file; do
     # Extract PID from filename: .tmp.<pid>.<suffix>
@@ -369,6 +416,9 @@ state_cleanup_orphans() {
     fi
     rm -f "$tmp_file"
   done < <(find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin "+$ORPHAN_MAX_AGE_MINUTES" 2>/dev/null)
+
+  # Pass 2: hard-age upper bound — unconditional removal of very old .tmp files
+  find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin "+$ORPHAN_HARD_AGE_MINUTES" -delete 2>/dev/null || true
 
   # Remove stale session files
   find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin "+$ORPHAN_MAX_AGE_MINUTES" -delete 2>/dev/null || true

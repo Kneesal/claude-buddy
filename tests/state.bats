@@ -334,8 +334,9 @@ load test_helper
     # After sourcing, set options must match default (no -e, -u, -o pipefail).
     [[ "$-" != *e* ]] || exit 10
     [[ "$-" != *u* ]] || exit 11
-    # pipefail check — if set, this pipeline would fail
-    set +o pipefail 2>/dev/null
+    # Real pipefail check: with pipefail off, `false | true` exits 0. With
+    # pipefail on, it exits 1. If state.sh leaked pipefail, this pipeline fails.
+    false | true || exit 12
     echo "ok"
   '
   [ "$status" -eq 0 ]
@@ -422,10 +423,11 @@ load test_helper
 }
 
 # Fix #7: cleanup skips .tmp files owned by live processes
-@test "cleanup: does NOT remove .tmp files whose PID is still alive" {
-  # Create a .tmp file owned by our own PID (still alive)
+@test "cleanup: does NOT remove .tmp files whose PID is still alive (within hard age)" {
+  # .tmp file owned by our own live PID, aged 2 hours (past 60m soft cap but
+  # well under 24h hard cap). Must be preserved by the PID-aware pass.
   local live_tmp="$CLAUDE_PLUGIN_DATA/.tmp.$$.alive"
-  touch -t 202001010000 "$live_tmp"  # old enough to match -mmin +60
+  touch -d "2 hours ago" "$live_tmp"
   state_cleanup_orphans
   [ -f "$live_tmp" ]
 }
@@ -455,4 +457,120 @@ load test_helper
   local warning_count
   warning_count="$(echo "$stderr" | grep -c 'failed to parse' || true)"
   [ "$warning_count" -eq 1 ]
+}
+
+# ============================================================
+# Round-2 fix regression tests
+# ============================================================
+
+# R2 Fix #1: Symlinked lock file is refused (covers FIFO hang + file truncation)
+@test "buddy_save: refuses symlinked lock file pointing at a regular file" {
+  local victim="$BATS_TEST_TMPDIR/victim"
+  echo "ORIGINAL CONTENT" > "$victim"
+  # Ensure data dir exists, then plant a symlink where the lock would go
+  mkdir -p "$CLAUDE_PLUGIN_DATA"
+  ln -sf "$victim" "$CLAUDE_PLUGIN_DATA/buddy.json.lock"
+
+  run --separate-stderr bash -c 'source "$0"; echo "{\"a\":1}" | buddy_save' "$STATE_LIB"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"symlinked lock file"* ]]
+  # Victim file must be untouched
+  run cat "$victim"
+  [ "$output" = "ORIGINAL CONTENT" ]
+}
+
+@test "buddy_save: refuses symlinked lock file pointing at a FIFO (no hang)" {
+  local fifo="$BATS_TEST_TMPDIR/victim.fifo"
+  mkfifo "$fifo"
+  mkdir -p "$CLAUDE_PLUGIN_DATA"
+  ln -sf "$fifo" "$CLAUDE_PLUGIN_DATA/buddy.json.lock"
+
+  # Wrap in timeout so a regression (hang) fails rather than blocks forever
+  run --separate-stderr timeout 3 bash -c 'source "$0"; echo "{\"a\":1}" | buddy_save' "$STATE_LIB"
+  # Exit 124 would mean timeout fired (regression). Any other non-zero is OK.
+  [ "$status" -ne 0 ]
+  [ "$status" -ne 124 ]
+}
+
+# R2 Fix #2: buddy_save rejects empty stdin
+@test "buddy_save: rejects empty stdin without silently corrupting state" {
+  # Pre-populate with valid state
+  echo '{"name":"Pip"}' | buddy_save
+  # Now attempt a save with empty stdin — should fail, not corrupt
+  run --separate-stderr bash -c 'source "$0"; : | buddy_save' "$STATE_LIB"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"empty stdin"* ]]
+  # buddy.json must still be valid and unchanged
+  run --separate-stderr buddy_load
+  [ "$status" -eq 0 ]
+  local name
+  name="$(echo "$output" | jq -r '.name')"
+  [ "$name" = "Pip" ]
+}
+
+# R2 Fix #3: Colon-containing keys don't cause false-positive suppression
+# and accumulator survives re-source within a process
+@test "_state_log_once: bare key is not suppressed after colon-containing key" {
+  run --separate-stderr bash -c '
+    source "'"$STATE_LIB"'"
+    _state_log_once "corrupt:/some/path" "first warning"
+    _state_log_once "corrupt" "second warning"
+  '
+  # Both messages should appear on stderr
+  [[ "$stderr" == *"first warning"* ]]
+  [[ "$stderr" == *"second warning"* ]]
+}
+
+@test "_state_log_once: re-sourcing in same process preserves dedup accumulator" {
+  run --separate-stderr bash -c '
+    source "'"$STATE_LIB"'"
+    _state_log_once "repeated" "first warning"
+    # Re-source (idempotent — _STATE_SH_LOADED prevents re-init)
+    source "'"$STATE_LIB"'"
+    _state_log_once "repeated" "second warning (should be silent)"
+  '
+  local count
+  count="$(echo "$stderr" | grep -c 'warning' || true)"
+  [ "$count" -eq 1 ]
+}
+
+# R2 Fix #7: session_id length limit
+@test "session_save: rejects session_id longer than 128 chars" {
+  local long_id
+  long_id="$(printf 'a%.0s' {1..129})"  # 129 chars
+  run --separate-stderr bash -c 'source "$0"; echo "{}" | session_save "'"$long_id"'"' "$STATE_LIB"
+  [ "$status" -ne 0 ]
+}
+
+@test "session_save: accepts session_id exactly 128 chars" {
+  local max_id
+  max_id="$(printf 'a%.0s' {1..128})"
+  echo '{"ok":true}' | session_save "$max_id"
+  [ -f "$CLAUDE_PLUGIN_DATA/session-${max_id}.json" ]
+}
+
+# R2 Fix #6: 24h hard upper bound in cleanup
+@test "cleanup: removes .tmp files older than 24h even when PID is alive" {
+  # Create a .tmp file with a live PID (our own) but touched 25h ago
+  local old_tmp="$CLAUDE_PLUGIN_DATA/.tmp.$$.hardage"
+  touch "$old_tmp"
+  # Set mtime to 25 hours ago (more than ORPHAN_HARD_AGE_MINUTES=1440)
+  touch -d "25 hours ago" "$old_tmp"
+  state_cleanup_orphans
+  [ ! -f "$old_tmp" ]
+}
+
+# R2 Fix #8: _state_ensure_dir rejects unwritable existing dir
+@test "_state_ensure_dir: returns 1 with writability error for read-only dir" {
+  local ro_dir="$BATS_TEST_TMPDIR/readonly"
+  mkdir -p "$ro_dir"
+  chmod 555 "$ro_dir"
+  export CLAUDE_PLUGIN_DATA="$ro_dir"
+
+  run --separate-stderr _state_ensure_dir "test_caller"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not writable"* ]]
+
+  # Restore so bats teardown can clean up
+  chmod 755 "$ro_dir"
 }
