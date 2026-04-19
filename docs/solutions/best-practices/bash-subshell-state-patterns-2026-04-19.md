@@ -56,7 +56,7 @@ A test that loops with `r=$(_rng_int 1 100)` therefore:
 2. Forks subshell 2. Sees the same pre-fork state as subshell 1. Advances. Echoes the same value.
 3. Repeats forever. 10,000 rolls produce 10,000 identical outputs.
 
-The test output showed `common=0` because the fixed seed happened to land in the uncommon band (`raw % 100 == 73` initially, later `37` after we swapped to high-bit extraction). Either way, the distribution contract was broken because the library was stuck on one value.
+The test output showed `common=0` because the fixed seed happened to land in the uncommon band (`raw % 100 == 73` initially, later `37` after we swapped to high-bit extraction — a separate correctness fix documented in [bash-lcg-hotpath-patterns-2026-04-19.md](./bash-lcg-hotpath-patterns-2026-04-19.md), since Numerical Recipes LCG low bits have too short a period for small-range modulo). Either way, the distribution contract was broken because the library was stuck on one value.
 
 ### B. The correct pattern: result-via-global
 
@@ -217,6 +217,7 @@ roll_buddy() {
 
 ## Related
 
+- [bash-lcg-hotpath-patterns-2026-04-19.md](./bash-lcg-hotpath-patterns-2026-04-19.md) — the sibling correctness and performance story. The same test failure (all rolls in one rarity band) can come from either a subshell wiping LCG state (this doc) OR from LCG low-bit non-uniformity (that doc). Both were in play during P1-2 implementation; diagnosing each one required treating it as a separate bug with an independent fix.
 - [bash-state-library-patterns-2026-04-18.md](./bash-state-library-patterns-2026-04-18.md) — structural conventions that `rng.sh` inherits (no module-scope `set -e`, bash 4.1+ guard, re-source sentinel, `declare -gA` for caches, explicit per-function error handling, bats `--separate-stderr` discipline). This pattern is a runtime sibling to those structural conventions.
 - [P1-2 plan](../../plans/2026-04-18-001-feat-p1-2-hatch-roller-plan.md) — the plan document that specified `BUDDY_RNG_SEED` as a test seam. The subshell pattern was not anticipated in the plan; it was discovered during implementation and refactored in commit `2af6b1f`.
 - [P1-2 ticket](../../roadmap/P1-2-hatch-roller.md) — Implementation Notes section flags the subshell gotcha as a `/ce:compound` candidate. This document is the fulfilment of that note.
