@@ -38,6 +38,8 @@ fi
 if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
   _RNG_SH_LOADED=1
 
+  # --- Rarity distribution ---
+
   # Pity threshold is a content decision, not a tunable. Matches umbrella plan D8.
   readonly PITY_THRESHOLD=10
 
@@ -55,6 +57,8 @@ if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
   readonly PITY_CUT_LEGENDARY=1
   readonly PITY_CUT_EPIC=5
   # rare = rest (15)
+
+  # --- Stat-shape distribution ---
 
   # Rarity floors per tier. Remaining headroom filled with peak/dump/mid shape.
   declare -gA _RNG_FLOORS=(
@@ -96,6 +100,12 @@ if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
   # that cost is paid once per species per process.
   declare -gA _RNG_SPECIES_PEAK=()
   declare -gA _RNG_SPECIES_DUMP=()
+
+  # Scalar out-parameters written by _rng_load_species_weights. Declared here
+  # alongside the cache arrays so the full set of per-process mutable globals
+  # is visible in one place (maintainability M-5).
+  _RNG_STAT_PEAK=""
+  _RNG_STAT_DUMP=""
 
   # Per-process flags
   _RNG_SEEDED=0
@@ -313,6 +323,8 @@ roll_name() {
 # Epic/Legendary). When pity_counter >= PITY_THRESHOLD, the roll is forced to
 # Rare+ with a 10:4:1 internal split that preserves the natural ratio.
 # Sets _RNG_ROLL and echoes to stdout.
+# No jq dependency — pure bash arithmetic; callable even when jq is absent.
+# (roll_rarity and next_pity_counter intentionally skip _rng_check_jq.)
 roll_rarity() {
   local pity="${1:-}"
   if ! [[ "$pity" =~ ^[0-9]+$ ]]; then
@@ -507,8 +519,11 @@ roll_stats() {
 # design decision, P4-1 owns the signals field and its schema — this phase
 # stays ignorant of P4-1's data model.
 #
-# Sets _RNG_ROLL to the JSON and echoes it.
+# Sets _RNG_ROLL to the JSON and echoes it. Clears _RNG_ROLL on entry so
+# partial failures (sub-roll fails mid-chain) do not leave callers reading a
+# stale rarity or species string from a previous successful call.
 roll_buddy() {
+  _RNG_ROLL=""
   _rng_check_jq "roll_buddy" || return 1
   local pity="${1:-}"
   if ! [[ "$pity" =~ ^[0-9]+$ ]]; then
@@ -516,16 +531,16 @@ roll_buddy() {
     return 1
   fi
 
-  roll_rarity "$pity" >/dev/null || { _rng_log "roll_buddy: roll_rarity failed"; return 1; }
+  roll_rarity "$pity" >/dev/null || { _rng_log "roll_buddy: roll_rarity failed"; _RNG_ROLL=""; return 1; }
   local rarity="$_RNG_ROLL"
 
-  roll_species >/dev/null || { _rng_log "roll_buddy: roll_species failed"; return 1; }
+  roll_species >/dev/null || { _rng_log "roll_buddy: roll_species failed"; _RNG_ROLL=""; return 1; }
   local species="$_RNG_ROLL"
 
-  roll_stats "$rarity" "$species" >/dev/null || { _rng_log "roll_buddy: roll_stats failed"; return 1; }
+  roll_stats "$rarity" "$species" >/dev/null || { _rng_log "roll_buddy: roll_stats failed"; _RNG_ROLL=""; return 1; }
   local stats_json="$_RNG_ROLL"
 
-  roll_name "$species" >/dev/null || { _rng_log "roll_buddy: roll_name failed"; return 1; }
+  roll_name "$species" >/dev/null || { _rng_log "roll_buddy: roll_name failed"; _RNG_ROLL=""; return 1; }
   local name="$_RNG_ROLL"
 
   # Generate 32-char hex ID. Prefer /dev/urandom; fall back to the LCG when
