@@ -1,6 +1,7 @@
 ---
 title: Bash state library patterns for Claude Code plugins
 date: 2026-04-18
+last_updated: 2026-04-19
 category: best-practices
 module: scripts/lib/state.sh
 problem_type: best_practice
@@ -10,16 +11,19 @@ applies_when:
   - Building any persistent state layer for a Claude Code plugin (bash + JSON)
   - Writing a bash library that will be sourced by hook scripts
   - Any bash CLI using tmp+rename atomic writes with flock
+  - Writing a destructive command that wipes a flock-protected state file
   - Writing bats tests for a sourced bash library
 tags:
   - bash
   - state-management
   - atomic-writes
+  - atomic-deletes
   - flock
   - json
   - claude-code-plugin
   - bats
   - schema-versioning
+  - crash-recovery
 ---
 
 # Bash state library patterns for Claude Code plugins
@@ -40,8 +44,9 @@ Plugin authors who need persistent state beyond what Claude Code's `${CLAUDE_PLU
 - PID-suffixed tmp files cleaned only by age will eventually be kept forever when a dead PID is recycled by a long-lived unrelated process.
 - Session IDs passed in from callers may contain path traversal characters or exceed `NAME_MAX=255`.
 - bats tests that source state.sh at the suite level pollute `set -e` into the test runner; stderr from sourced functions merges into `$output` without `--separate-stderr`.
+- A destructive command that wipes the state file cannot use `rm` directly under the flock — an interrupt between the open and the unlink leaves the file partially replaced. And calling `buddy_load` to confirm the file is parseable before deleting means a CORRUPT state becomes un-wipeable.
 
-These are the patterns the `scripts/lib/state.sh` library encodes after two full code-review cycles with 25 findings addressed.
+These are the patterns the `scripts/lib/state.sh` library encodes after two full code-review cycles with 25 findings addressed, plus the atomic-delete extension added in the P1-3 reset command.
 
 ## Guidance
 
@@ -140,6 +145,38 @@ if [[ -z "$content" ]]; then
 fi
 ```
 
+**Atomic delete: rename to a marker, then unlink, under the same flock.** A destructive command cannot just `rm` the state file. The rename-then-unlink pattern mirrors the atomic-write dance and leaves a recoverable breadcrumb if the process dies mid-dance.
+
+```bash
+# Under flock -x on buddy.json.lock:
+if [[ -f "$buddy_file" ]]; then
+  mv -f "$buddy_file" "$buddy_file.deleted"   # atomic rename — buddy_load now sees NO_BUDDY
+  rm -f "$buddy_file.deleted"                 # best-effort unlink; orphan sweep picks up crashes
+fi
+```
+
+Why both steps matter: the `mv` is the atomic commit point — after it returns, `buddy_load` legitimately sees `NO_BUDDY`. The `rm` is cleanup. If the process is SIGKILL'd between the two, the next load is still `NO_BUDDY` (correct), and `state_cleanup_orphans` picks up the orphan `.deleted` file on next session start (see Section E).
+
+**Hold the lock across both steps.** Release only after `rm -f`. A concurrent writer could otherwise see the rename, think the file is gone, and write a fresh state file that the later `rm` would *not* touch (different inode) — but a concurrent reader could race the intermediate state if the lock were released between the two.
+
+**Do not call `buddy_load` before deleting.** The file may be `CORRUPT`; parsing it before wiping is both unnecessary and a way to make CORRUPT state un-recoverable. Reset must work regardless of the file's content.
+
+**Apply the same symlink-rejection guard** as the write path. A destructive command that opens the lock file is an identical attack surface — symlink to a regular file truncates, symlink to a FIFO hangs past the flock timeout.
+
+```bash
+if [[ -L "$lock_file" ]]; then
+  _state_log "reset: refusing to open symlinked lock file $lock_file"
+  return 1
+fi
+exec {lock_fd}>"$lock_file"
+```
+
+**Timeout errors should be actionable.** A bare "flock timeout after 0.2s" is a diagnostic, not a user message. Tell the user what to do:
+
+```bash
+echo "reset: could not acquire lock within ${FLOCK_TIMEOUT}s — another operation may be in flight. Try again in a moment." >&2
+```
+
 ### C. Sentinel-based state machine
 
 **Use three sentinels, not two.** Two sentinels can't distinguish a corrupt file from one written by a newer plugin version. Returning `CORRUPT` for a future-version file would let a downgraded plugin clobber valid state.
@@ -223,6 +260,15 @@ done < <(find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin "+$ORPHAN_MAX_AGE_MIN
 find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin "+$ORPHAN_HARD_AGE_MINUTES" -delete || true
 ```
 
+**Sweep the atomic-delete marker unconditionally — no PID awareness, no age gate.** `.deleted` files (from the atomic-delete dance in Section B) are semantically different from `.tmp.*` files: they have no embedded PID, they represent a committed intent to wipe (not an in-flight write), and they can only exist if a prior reset was interrupted. The right policy is a single unconditional `rm`:
+
+```bash
+# Sweep any orphan buddy.json.deleted marker from a crashed reset.
+rm -f "$data_dir/buddy.json.deleted" 2>/dev/null || true
+```
+
+The PID-aware logic from Pass 1 must not be applied: there's no PID in the filename to probe, and `kill -0` on a non-existent PID would leave the marker forever. The hard-age upper bound from Pass 2 is unnecessary because the marker should never coexist with a live reset — the reset dance holds the flock across both the `mv` and the `rm`, so a well-behaved reset never leaves a marker on disk.
+
 **Never delete the `.lock` file** in cleanup. It's permanent and must survive across all writes.
 
 ### F. Session state (per-sessionId files)
@@ -298,6 +344,7 @@ These are not theoretical concerns. Every pattern above came from either an empi
 - **Symlink attacks** were empirically verified: a regular-file symlink target was zeroed by a normal `buddy_save` call; a FIFO symlink hung past the flock timeout until killed externally.
 - **Empty-stdin corruption** produces a file that passes `[[ -f ]]` but fails `jq` parse — `buddy_load` then returns `CORRUPT` permanently until manual intervention.
 - **`set -e` pollution** is invisible in unit tests that run the library in isolation; it only manifests when a hook sources the library in a real Claude Code session and a subcommand fails for an unrelated reason, silently aborting the hook.
+- **The atomic-delete dance** came out of building the P1-3 reset command: the first draft called `buddy_load` first to decide whether to wipe, which made CORRUPT state un-recoverable (the parse failed before the wipe could run). Switching to skip-parse-and-wipe made CORRUPT recoverable, but using a plain `rm` under the lock left a race window — a crash between the open and the unlink could leave a partially-wiped file. The rename-to-marker-then-unlink pattern closes both. The `.deleted` marker sweep is the crash-recovery net for the 1-in-N-million case where the process dies between `mv` and `rm`.
 
 Getting these patterns right in the state library is foundational. Every hook, status-line script, and slash command in the plugin touches this code on every invocation. A bug here is a bug in everything.
 
@@ -306,6 +353,7 @@ Getting these patterns right in the state library is foundational. Every hook, s
 - Building any persistent state layer for a Claude Code plugin (bash + JSON).
 - Writing any bash library that will be sourced by hook scripts subject to an "exit 0" contract.
 - Any bash CLI using tmp+rename atomic writes where lock files, symlink attacks, or concurrent writers are a concern.
+- Writing a destructive command (reset, clear, wipe) against a flock-protected state file — the atomic-delete dance in Section B + the `.deleted` sweep in Section E are the load-bearing pair.
 - Writing bats tests for a sourced bash library where `set -e` pollution and stderr capture are non-obvious.
 
 ## Examples
@@ -393,10 +441,51 @@ fi
 exec {lock_fd}>"$lock_file"
 ```
 
+**Atomic delete under lock vs. plain `rm`**
+
+```bash
+# BAD — rm on state file under lock. Works in the happy path but:
+#   - a crash between fd open and unlink is detectable only by inode absence
+#   - calling buddy_load first makes CORRUPT state un-wipeable
+if buddy_load >/dev/null; then
+  rm -f "$buddy_file"
+fi
+
+# GOOD — rename to marker, then unlink, holding the lock across both.
+# Skip buddy_load so CORRUPT state is still wipeable.
+if [[ -f "$buddy_file" ]]; then
+  mv -f "$buddy_file" "$buddy_file.deleted"
+  rm -f "$buddy_file.deleted"
+fi
+# orphan sweep on next session start handles the SIGKILL-between-mv-and-rm case
+```
+
+**`.deleted` marker sweep: unconditional, not PID-aware**
+
+```bash
+# BAD — reusing the .tmp.* PID-aware policy on .deleted files
+while IFS= read -r deleted_file; do
+  pid="$(basename "$deleted_file" | awk -F. '{print $3}')"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    continue   # but there's no PID in .deleted filenames — this branch never fires
+  fi
+  rm -f "$deleted_file"
+done < <(find "$data_dir" -maxdepth 1 -name 'buddy.json.deleted')
+
+# GOOD — single unconditional rm. The marker represents a committed intent
+# to wipe and cannot coexist with a live reset.
+rm -f "$data_dir/buddy.json.deleted" 2>/dev/null || true
+```
+
 ## Related
 
 - [claude-code-plugin-scaffolding-gotchas-2026-04-16.md](../developer-experience/claude-code-plugin-scaffolding-gotchas-2026-04-16.md) — establishes the "hooks must exit 0" plugin-system constraint that motivates this library's no-module-level-`set -e` design.
+- [claude-code-skill-dispatcher-pattern-2026-04-19.md](../developer-experience/claude-code-skill-dispatcher-pattern-2026-04-19.md) — the SKILL.md-as-thin-dispatcher convention that invokes the backing bash scripts (including the reset command) which apply the atomic-delete dance documented here.
 - [P1-1 state primitives plan](../../plans/2026-04-16-003-feat-p1-1-state-primitives-plan.md) — the plan document that produced this library.
 - [P1-1 ticket](../../roadmap/P1-1-state-primitives.md) — the roadmap ticket, including the review findings Notes section.
-- [scripts/lib/state.sh](../../../scripts/lib/state.sh) — the reference implementation.
-- [tests/state.bats](../../../tests/state.bats) — 52 tests exercising every pattern above.
+- [P1-3 plan](../../plans/2026-04-19-001-feat-p1-3-slash-commands-plan.md) — origin of the atomic-delete extension (reset command + orphan-sweep update).
+- [P1-3 ticket](../../roadmap/P1-3-slash-commands.md) — implementation notes including review-driven findings around the reset dance.
+- [scripts/lib/state.sh](../../../scripts/lib/state.sh) — the reference implementation, including the `.deleted` sweep in `state_cleanup_orphans`.
+- [scripts/reset.sh](../../../scripts/reset.sh) — the reference atomic-delete dance.
+- [tests/state.bats](../../../tests/state.bats) — 52 tests exercising the library's write/read patterns.
+- [tests/slash.bats](../../../tests/slash.bats) — 33 tests including atomic-delete dance, `.deleted` sweep, and flock-race coverage.

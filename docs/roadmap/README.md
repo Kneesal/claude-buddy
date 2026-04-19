@@ -10,8 +10,8 @@ Each ticket is a self-contained markdown file with frontmatter (`id`, `phase`, `
 |---|---|---|---|
 | [P0](./P0-scaffolding.md) | Plugin scaffolding | `done` | — |
 | [P1-1](./P1-1-state-primitives.md) | State primitives (atomic I/O, flock, schema) | `done` | P0 |
-| [P1-2](./P1-2-hatch-roller.md) | Hatch roller (rarity, stats, species) | `todo` | P1-1 |
-| [P1-3](./P1-3-slash-commands.md) | Slash command state machine | `todo` | P1-1, P1-2 |
+| [P1-2](./P1-2-hatch-roller.md) | Hatch roller (rarity, stats, species) | `done` | P1-1 |
+| [P1-3](./P1-3-slash-commands.md) | Slash command state machine | `done` | P1-1, P1-2 |
 | [P2](./P2-status-line.md) | Status line rendering | `todo` | P1-1 |
 | [P3-1](./P3-1-hook-wiring.md) | Hook wiring + session init | `todo` | P1-1, P1-3 |
 | [P3-2](./P3-2-commentary-engine.md) | Commentary engine (canned v1) | `todo` | P3-1 |
