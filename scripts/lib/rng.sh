@@ -91,15 +91,15 @@ if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
   readonly _RNG_LCG_C=1013904223
   readonly _RNG_LCG_M=4294967296   # 2^32
 
-  # Per-process species JSON cache. Keyed by species name. Safe inside a single
-  # rng.sh invocation — species files don't change mid-process.
-  declare -gA _RNG_SPECIES_CACHE=()
-
-  # Per-process peak-prefer / dump-prefer caches. Each roll_stats call previously
-  # spawned 2 extra jq processes to extract these from the JSON; with a cache
-  # that cost is paid once per species per process.
-  declare -gA _RNG_SPECIES_PEAK=()
-  declare -gA _RNG_SPECIES_DUMP=()
+  # Per-process species data caches. All four are invalidated together when
+  # BUDDY_SPECIES_DIR changes within the same process (see _rng_check_dir_change)
+  # — otherwise a test that swaps fixture dirs mid-run would read stale entries.
+  declare -gA _RNG_SPECIES_CACHE=()    # full JSON per species (from jq -c '.')
+  declare -gA _RNG_SPECIES_PEAK=()     # peak-prefer stat name per species
+  declare -gA _RNG_SPECIES_DUMP=()     # dump-prefer stat name per species
+  declare -gA _RNG_SPECIES_NAMES=()    # name_pool as newline-separated string per species
+  declare -ga _RNG_SPECIES_LIST=()     # indexed array of species names (cached roll_species find+sort result)
+  _RNG_CACHED_DIR=""                   # resolved species dir the caches were populated from
 
   # Scalar out-parameters written by _rng_load_species_weights. Declared here
   # alongside the cache arrays so the full set of per-process mutable globals
@@ -155,14 +155,27 @@ _rng_species_dir() {
 # Lazy-seed the LCG from /dev/urandom or a fallback composite. Runs at most
 # once per process (gated by _RNG_SEEDED). Callers that need deterministic
 # sequences set BUDDY_RNG_SEED before the first _rng_int call.
+#
+# _RNG_SEEDED is set only AFTER a successful seed is written to _RNG_LCG_STATE
+# so a failure mid-function does not leave the flag set with no seed in place.
 _rng_seed() {
   if (( _RNG_SEEDED )); then
     return 0
   fi
-  _RNG_SEEDED=1
 
+  # Deterministic path: caller-supplied seed (via env var). Clamp to 32 bits to
+  # keep LCG state in an unsigned 32-bit range. Seeds longer than 10 digits are
+  # truncated to the low 10 (stable projection) so bash arithmetic does not
+  # overflow signed int64 on pathological input like 9999999999999999999.
   if [[ -n "${BUDDY_RNG_SEED:-}" && "${BUDDY_RNG_SEED}" =~ ^[0-9]+$ ]]; then
-    _RNG_LCG_STATE=$(( BUDDY_RNG_SEED % _RNG_LCG_M ))
+    local seed_str="$BUDDY_RNG_SEED"
+    if (( ${#seed_str} > 10 )); then
+      _rng_log "_rng_seed: BUDDY_RNG_SEED has ${#seed_str} digits; using low 10 as 32-bit seed"
+      seed_str="${seed_str: -10}"
+    fi
+    # 10# forces decimal (prevents octal misinterpretation of leading zeros).
+    _RNG_LCG_STATE=$(( 10#$seed_str % _RNG_LCG_M ))
+    _RNG_SEEDED=1
     return 0
   fi
 
@@ -172,19 +185,32 @@ _rng_seed() {
   fi
 
   if [[ -z "$seed" || ! "$seed" =~ ^[0-9]+$ ]]; then
-    # Fallback composite: high-res time + pid + bashpid + a counter byte.
-    # Single `date +%s` alone would collide on back-to-back invocations in the
-    # same second. Composite diverges even on rapid hatches.
+    # Fallback composite: high-res time + PID + BASHPID. A plain `date +%s`
+    # would collide for back-to-back invocations in the same second, so we
+    # mix in sub-second precision (EPOCHREALTIME or date +%s%N) plus the
+    # process IDs to diverge even in tight reroll loops.
     local now="${EPOCHREALTIME:-}"
     [[ -z "$now" ]] && now="$(date +%s%N 2>/dev/null || date +%s)"
     now="${now//./}"
-    seed="${now}${$}${BASHPID:-$$}"
-    # Reduce to 32 bits via modulo
-    seed=$(( ${seed: -10} % _RNG_LCG_M ))
+    if [[ -z "$now" ]]; then
+      _rng_log "_rng_seed: date also unavailable, seeding from PID only (very weak entropy)"
+      now="$$"
+    fi
+    local composite="${now}${$}${BASHPID:-$$}"
+    # Cap length before arithmetic to avoid signed int64 overflow on very long
+    # composites. 10 digits fits comfortably within 2^33 so $((..)) is safe,
+    # and 10# forces decimal so leading zeros are not misread as octal
+    # (e.g. "0001234" would otherwise be 668 octal — and "0001239" would be
+    # a syntax error because 9 is not a valid octal digit).
+    if (( ${#composite} > 10 )); then
+      composite="${composite: -10}"
+    fi
+    seed=$(( 10#$composite % _RNG_LCG_M ))
     _rng_log "_rng_seed: /dev/urandom unavailable, using time+pid composite (weaker entropy)"
   fi
 
   _RNG_LCG_STATE=$(( seed % _RNG_LCG_M ))
+  _RNG_SEEDED=1
 }
 
 # Generate a random integer in [min, max], inclusive both ends.
@@ -242,6 +268,24 @@ _rng_check_jq() {
   return 0
 }
 
+# Invalidate per-process species caches when BUDDY_SPECIES_DIR changes.
+# Every public function that reads species data calls this first so that a
+# test which swaps BUDDY_SPECIES_DIR mid-run does not read stale cached
+# weights/names from the prior fixture dir.
+_rng_check_dir_change() {
+  local dir
+  dir="$(_rng_species_dir)" || return 1
+  if [[ "${_RNG_CACHED_DIR:-}" != "$dir" ]]; then
+    _RNG_CACHED_DIR="$dir"
+    _RNG_SPECIES_CACHE=()
+    _RNG_SPECIES_PEAK=()
+    _RNG_SPECIES_DUMP=()
+    _RNG_SPECIES_NAMES=()
+    _RNG_SPECIES_LIST=()
+  fi
+  return 0
+}
+
 # Load a species JSON file into the per-process cache and echo its contents.
 # Caches by species name on first read; subsequent reads are O(1).
 _rng_load_species() {
@@ -273,49 +317,73 @@ _rng_load_species() {
 # Public: pick a species uniformly from the available species JSON files.
 # Honors BUDDY_SPECIES_DIR for test fixtures.
 # Sets _RNG_ROLL and echoes to stdout (see _rng_int docstring re: subshell state).
+# The species list is cached in _RNG_SPECIES_LIST after the first call and
+# reused on every subsequent call — the file listing is stable for the
+# process lifetime. Dir changes via BUDDY_SPECIES_DIR flush the cache.
 roll_species() {
   _rng_check_jq "roll_species" || return 1
-  local dir
-  dir="$(_rng_species_dir)" || { _rng_log "roll_species: could not resolve species dir"; return 1; }
-  if [[ ! -d "$dir" ]]; then
-    _rng_log "roll_species: $dir is not a directory"
-    return 1
+  _rng_check_dir_change || { _rng_log "roll_species: could not resolve species dir"; return 1; }
+  if [[ ${#_RNG_SPECIES_LIST[@]} -eq 0 ]]; then
+    local dir="$_RNG_CACHED_DIR"
+    if [[ ! -d "$dir" ]]; then
+      _rng_log "roll_species: $dir is not a directory"
+      return 1
+    fi
+    local f
+    while IFS= read -r f; do
+      _RNG_SPECIES_LIST+=("$(basename "$f" .json)")
+    done < <(find "$dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null | sort)
   fi
-  # Collect species filenames (without .json) into an array.
-  local files=()
-  local f
-  while IFS= read -r f; do
-    files+=("$(basename "$f" .json)")
-  done < <(find "$dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null | sort)
-  local count="${#files[@]}"
+  local count="${#_RNG_SPECIES_LIST[@]}"
   if (( count == 0 )); then
-    _rng_log "roll_species: no species files in $dir"
+    _rng_log "roll_species: no species files in $_RNG_CACHED_DIR"
     return 1
   fi
   _rng_int 1 "$count" >/dev/null || return 1
-  _RNG_ROLL="${files[$((_RNG_RESULT - 1))]}"
+  _RNG_ROLL="${_RNG_SPECIES_LIST[$((_RNG_RESULT - 1))]}"
   printf '%s' "$_RNG_ROLL"
 }
 
+# Internal: load and cache the name_pool for a species as a newline-separated
+# string. One jq invocation per species per process — subsequent roll_name
+# calls split the cached string with mapfile (a bash builtin, no process fork).
+# Null and empty entries are filtered at load time so roll_name never returns
+# the literal string "null" to a caller.
+_rng_load_species_names() {
+  local species="$1"
+  if [[ -v _RNG_SPECIES_NAMES[$species] ]]; then
+    return 0
+  fi
+  local json
+  json="$(_rng_load_species "$species")" || return 1
+  _RNG_SPECIES_NAMES[$species]="$(printf '%s' "$json" | \
+    jq -r '.name_pool[] | select(. != null and . != "")' 2>/dev/null)"
+}
+
 # Public: pick a random name from the given species' name_pool.
-# Sets _RNG_ROLL and echoes to stdout.
+# Sets _RNG_ROLL and echoes to stdout. On warm cache, this function spawns
+# zero jq processes — the name pool is kept as a newline-separated string
+# and split with mapfile (bash builtin) on each call.
 roll_name() {
   _rng_check_jq "roll_name" || return 1
+  _rng_check_dir_change || return 1
   local species="${1:-}"
   if ! _rng_valid_species_name "$species"; then
     _rng_log "roll_name: invalid species name '$species'"
     return 1
   fi
-  local json
-  json="$(_rng_load_species "$species")" || return 1
-  local count
-  count="$(printf '%s' "$json" | jq -r '.name_pool | length' 2>/dev/null)"
-  if ! [[ "$count" =~ ^[0-9]+$ ]] || (( count == 0 )); then
-    _rng_log "roll_name: empty or invalid name_pool for $species"
+  _rng_load_species_names "$species" || return 1
+  local -a names
+  if [[ -n "${_RNG_SPECIES_NAMES[$species]}" ]]; then
+    mapfile -t names <<< "${_RNG_SPECIES_NAMES[$species]}"
+  fi
+  local count="${#names[@]}"
+  if (( count == 0 )); then
+    _rng_log "roll_name: empty name_pool for $species (after null/empty filter)"
     return 1
   fi
   _rng_int 1 "$count" >/dev/null || return 1
-  _RNG_ROLL="$(printf '%s' "$json" | jq -r ".name_pool[$((_RNG_RESULT - 1))]")"
+  _RNG_ROLL="${names[$((_RNG_RESULT - 1))]}"
   printf '%s' "$_RNG_ROLL"
 }
 
@@ -417,6 +485,7 @@ _rng_load_species_weights() {
 # Sets _RNG_ROLL to the JSON and echoes it.
 roll_stats() {
   _rng_check_jq "roll_stats" || return 1
+  _rng_check_dir_change || return 1
   local rarity="${1:-}"
   local species="${2:-}"
 
@@ -550,12 +619,20 @@ roll_buddy() {
     id="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \t\n')"
   fi
   if [[ -z "$id" || ! "$id" =~ ^[0-9a-f]{32}$ ]]; then
-    # Fallback: four 32-bit LCG pulls → 32 hex chars.
+    # LCG fallback: advance state 4× and use the full 32-bit state each step
+    # for 128 bits of ID entropy (4 × 32 = 128). We cannot use _rng_int here
+    # because _rng_int outputs the high 16 bits only (state >> 16) to avoid
+    # short-period low bits on small-range modulo — correct for distribution
+    # uniformity, but caps per-slot entropy at 16 bits. For an ID we care
+    # about collision resistance, not modulo uniformity, so the full state is
+    # the right value. The LCG's low-bit non-uniformity is harmless when the
+    # output is concatenated into a 128-bit identifier.
+    _rng_seed
     local h1 h2 h3 h4
-    _rng_int 0 4294967295 >/dev/null || return 1; h1=$_RNG_RESULT
-    _rng_int 0 4294967295 >/dev/null || return 1; h2=$_RNG_RESULT
-    _rng_int 0 4294967295 >/dev/null || return 1; h3=$_RNG_RESULT
-    _rng_int 0 4294967295 >/dev/null || return 1; h4=$_RNG_RESULT
+    _RNG_LCG_STATE=$(( (_RNG_LCG_A * _RNG_LCG_STATE + _RNG_LCG_C) % _RNG_LCG_M )); h1=$_RNG_LCG_STATE
+    _RNG_LCG_STATE=$(( (_RNG_LCG_A * _RNG_LCG_STATE + _RNG_LCG_C) % _RNG_LCG_M )); h2=$_RNG_LCG_STATE
+    _RNG_LCG_STATE=$(( (_RNG_LCG_A * _RNG_LCG_STATE + _RNG_LCG_C) % _RNG_LCG_M )); h3=$_RNG_LCG_STATE
+    _RNG_LCG_STATE=$(( (_RNG_LCG_A * _RNG_LCG_STATE + _RNG_LCG_C) % _RNG_LCG_M )); h4=$_RNG_LCG_STATE
     id=$(printf '%08x%08x%08x%08x' "$h1" "$h2" "$h3" "$h4")
   fi
 

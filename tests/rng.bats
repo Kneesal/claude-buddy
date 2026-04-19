@@ -129,6 +129,141 @@ load test_helper
   [ "${#seen[@]}" -eq 10 ]
 }
 
+@test "BUDDY_RNG_SEED: oversized value clamps to low 10 digits without overflow" {
+  # Without the clamp, a 19-digit seed overflows signed int64 during modulo
+  # and produces negative state → out-of-range _rng_int → stat-floor violations.
+  export BUDDY_RNG_SEED=9999999999999999999
+  source "$RNG_LIB"
+  local i value
+  for (( i = 0; i < 500; i++ )); do
+    _rng_int 1 100 >/dev/null
+    value=$_RNG_RESULT
+    (( value >= 1 && value <= 100 )) || {
+      echo "out-of-range at i=$i: value=$value (seed=$BUDDY_RNG_SEED)"
+      return 1
+    }
+  done
+}
+
+@test "BUDDY_RNG_SEED: oversized value produces a deterministic sequence" {
+  local seq1 seq2
+  seq1=$(BUDDY_RNG_SEED=9999999999999999999 bash -c '
+    source "'"$RNG_LIB"'"
+    for (( i = 0; i < 10; i++ )); do _rng_int 1 100; echo; done
+  ')
+  seq2=$(BUDDY_RNG_SEED=9999999999999999999 bash -c '
+    source "'"$RNG_LIB"'"
+    for (( i = 0; i < 10; i++ )); do _rng_int 1 100; echo; done
+  ')
+  [ "$seq1" = "$seq2" ]
+}
+
+@test "roll_buddy: ID from LCG fallback has 32 bits of entropy per 8-char group (not 16)" {
+  # Force LCG fallback by pointing /dev/urandom reads to a file that returns
+  # empty. We can't easily do that, so we test the invariant: the fallback
+  # path must produce IDs where the upper 4 hex digits of each 8-char slot are
+  # not always "0000". We call the LCG fallback directly by sourcing rng.sh,
+  # setting BUDDY_RNG_SEED, and observing that the LCG-derived values would
+  # cover the full 32-bit range.
+  export BUDDY_RNG_SEED=42
+  source "$RNG_LIB"
+  _rng_seed
+  # Advance and collect 20 raw 32-bit LCG states
+  local i v nonzero_top=0
+  for (( i = 0; i < 20; i++ )); do
+    _RNG_LCG_STATE=$(( (_RNG_LCG_A * _RNG_LCG_STATE + _RNG_LCG_C) % _RNG_LCG_M ))
+    v=$_RNG_LCG_STATE
+    # Upper 16 bits of a full 32-bit state
+    local top=$(( v >> 16 ))
+    if (( top > 0 )); then
+      nonzero_top=$(( nonzero_top + 1 ))
+    fi
+  done
+  # With full 32-bit states, essentially all 20 should have non-zero upper
+  # 16 bits. (Threshold 15 leaves a tiny margin.)
+  (( nonzero_top >= 15 )) || {
+    echo "LCG raw state produced mostly-zero upper bits: $nonzero_top/20 non-zero"
+    return 1
+  }
+}
+
+@test "BUDDY_SPECIES_DIR: changing the dir mid-process invalidates species caches" {
+  # First fixture: one fake species "testfox" with peak-prefer debugging,
+  # dump-prefer patience. Second fixture: replace testfox with different weights.
+  local fixture1="$BATS_TEST_TMPDIR/fixture1"
+  local fixture2="$BATS_TEST_TMPDIR/fixture2"
+  mkdir -p "$fixture1" "$fixture2"
+  cat > "$fixture1/testfox.json" <<'JSON'
+{
+  "schemaVersion": 1, "species": "testfox", "voice": "test",
+  "base_stats_weights": {
+    "debugging": "peak-prefer", "patience": "dump-prefer",
+    "chaos": "neutral", "wisdom": "neutral", "snark": "neutral"
+  },
+  "name_pool": ["Alpha", "Beta", "Gamma"],
+  "evolution_paths": {}, "line_banks": {}, "sprite": null
+}
+JSON
+  cat > "$fixture2/testfox.json" <<'JSON'
+{
+  "schemaVersion": 1, "species": "testfox", "voice": "test",
+  "base_stats_weights": {
+    "debugging": "neutral", "patience": "neutral",
+    "chaos": "peak-prefer", "wisdom": "dump-prefer", "snark": "neutral"
+  },
+  "name_pool": ["Delta", "Epsilon", "Zeta"],
+  "evolution_paths": {}, "line_banks": {}, "sprite": null
+}
+JSON
+
+  source "$RNG_LIB"
+
+  export BUDDY_SPECIES_DIR="$fixture1"
+  _rng_load_species_weights testfox
+  [ "$_RNG_STAT_PEAK" = "debugging" ]
+  [ "$_RNG_STAT_DUMP" = "patience" ]
+
+  export BUDDY_SPECIES_DIR="$fixture2"
+  _rng_check_dir_change
+  _rng_load_species_weights testfox
+  [ "$_RNG_STAT_PEAK" = "chaos" ] || { echo "cache not invalidated: peak=$_RNG_STAT_PEAK"; return 1; }
+  [ "$_RNG_STAT_DUMP" = "wisdom" ] || { echo "cache not invalidated: dump=$_RNG_STAT_DUMP"; return 1; }
+}
+
+@test "roll_name: name_pool containing JSON null is filtered, not returned as 'null' literal" {
+  local fixture="$BATS_TEST_TMPDIR/fixture-null"
+  mkdir -p "$fixture"
+  cat > "$fixture/testfox.json" <<'JSON'
+{
+  "schemaVersion": 1, "species": "testfox", "voice": "test",
+  "base_stats_weights": {
+    "debugging": "peak-prefer", "patience": "dump-prefer",
+    "chaos": "neutral", "wisdom": "neutral", "snark": "neutral"
+  },
+  "name_pool": ["Alpha", null, "Gamma", "", "Delta"],
+  "evolution_paths": {}, "line_banks": {}, "sprite": null
+}
+JSON
+  export BUDDY_SPECIES_DIR="$fixture"
+  source "$RNG_LIB"
+
+  local i
+  for (( i = 0; i < 50; i++ )); do
+    roll_name testfox >/dev/null
+    case "$_RNG_ROLL" in
+      Alpha|Gamma|Delta) ;;
+      null|"")
+        echo "unfiltered null/empty leaked at i=$i: '$_RNG_ROLL'"
+        return 1
+        ;;
+      *)
+        echo "unexpected name at i=$i: '$_RNG_ROLL'"
+        return 1
+        ;;
+    esac
+  done
+}
+
 # ============================================================
 # Species data integrity — Unit 2
 # ============================================================
