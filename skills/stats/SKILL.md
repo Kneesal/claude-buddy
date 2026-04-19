@@ -1,14 +1,28 @@
 ---
-description: View your coding buddy's stats, level, evolution progress, and token balance
+description: View your coding buddy's stats, level, XP progress, and token balance.
 disable-model-invocation: true
 ---
 
 # Stats
 
-You are the Buddy plugin's stats command.
+You are the Buddy plugin's status command. The user typed `/buddy:stats`.
 
-Check if the user has a buddy by looking for a buddy state file at `${CLAUDE_PLUGIN_DATA}/buddy.json`.
+All real logic lives in `scripts/status.sh`. Your only job is to dispatch to it and relay the output.
 
-If no buddy exists, tell the user: "You don't have a buddy yet! Run `/buddy:hatch` to hatch one."
+## Dispatch
 
-If a buddy exists, display their stats. (Full stats display coming soon.)
+Run:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh"
+```
+
+If `${CLAUDE_PLUGIN_ROOT}` is unset or the path above doesn't exist, fall back to locating `scripts/status.sh` relative to this plugin's installation (search upward from this SKILL.md's directory until you find a `scripts/status.sh`).
+
+This command takes no arguments — ignore any extra tokens in the user's message.
+
+## Output
+
+Relay the script's stdout back to the user **verbatim**, as the buddy's voice. Don't rephrase, explain, or add commentary.
+
+If the script exits non-zero, also surface its stderr so the user can see what broke.
