@@ -2,7 +2,7 @@
 
 A Claude Code plugin that extends the built-in `/buddy` with gacha hatching and Tamagotchi-style evolution. Your buddy rolls randomly on hatch — species, rarity, stats, personality — and grows over time based on how you code.
 
-> **Status:** P0 scaffolding — plugin installs and slash commands respond. P1-1 state primitives landed. Hatching, evolution, and commentary are coming in future releases.
+> **Status:** P0 scaffolding — plugin installs and slash commands respond. P1-1 state primitives and P1-2 hatch roller landed. `/buddy:hatch` wiring, evolution, and commentary are coming in future releases.
 
 ## Requirements
 
@@ -38,6 +38,12 @@ claude plugin install .
 | `/buddy:stats` | View your buddy's stats, level, and evolution progress |
 
 If you haven't hatched a buddy yet, `/buddy:interact` and `/buddy:stats` will prompt you to run `/buddy:hatch` first.
+
+## Libraries
+
+- **`scripts/lib/state.sh`** (P1-1) — atomic, flock-locked JSON persistence for `buddy.json` and per-session `session-<id>.json` with schema versioning and corruption sentinels. Tests: `tests/state.bats`.
+- **`scripts/lib/rng.sh`** (P1-2) — hatch roller: `roll_rarity` (60/25/10/4/1 with pseudo-pity rescue at 10), `roll_species`, `roll_stats` (rarity floors + one-peak/one-dump/three-mid shape with species bias), `roll_name`, `roll_buddy` (the full composed inner-buddy JSON), `next_pity_counter`. Deterministic via `BUDDY_RNG_SEED` for tests. Tests: `tests/rng.bats`.
+- **`scripts/species/*.json`** (P1-2) — per-species data (voice archetype, stat weights, name pool). 5 launch species; 18 at P7-1.
 
 ## Implementation language
 

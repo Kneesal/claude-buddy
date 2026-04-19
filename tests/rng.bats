@@ -598,6 +598,110 @@ load test_helper
   done
 }
 
+# ============================================================
+# roll_buddy — Unit 6
+# ============================================================
+
+@test "roll_buddy: emits valid JSON with exactly the expected top-level keys" {
+  source "$RNG_LIB"
+  roll_buddy 0 >/dev/null
+  run jq -e '
+    (keys | sort) == ["form", "id", "level", "name", "rarity", "shiny", "species", "stats", "xp"]
+  ' <<< "$_RNG_ROLL"
+  [ "$status" -eq 0 ]
+}
+
+@test "roll_buddy: signals is deliberately absent (owned by P4-1)" {
+  source "$RNG_LIB"
+  roll_buddy 0 >/dev/null
+  run jq -e 'has("signals") | not' <<< "$_RNG_ROLL"
+  [ "$status" -eq 0 ]
+}
+
+@test "roll_buddy: form=base, level=1, xp=0, shiny=false" {
+  source "$RNG_LIB"
+  roll_buddy 0 >/dev/null
+  [ "$(jq -r '.form' <<< "$_RNG_ROLL")" = "base" ]
+  [ "$(jq -r '.level' <<< "$_RNG_ROLL")" = "1" ]
+  [ "$(jq -r '.xp' <<< "$_RNG_ROLL")" = "0" ]
+  [ "$(jq -r '.shiny' <<< "$_RNG_ROLL")" = "false" ]
+}
+
+@test "roll_buddy: id is 32 hex chars" {
+  source "$RNG_LIB"
+  roll_buddy 0 >/dev/null
+  local id
+  id="$(jq -r '.id' <<< "$_RNG_ROLL")"
+  [[ "$id" =~ ^[0-9a-f]{32}$ ]] || { echo "bad id: $id"; return 1; }
+}
+
+@test "roll_buddy: species is one of the 5 launch species" {
+  source "$RNG_LIB"
+  roll_buddy 0 >/dev/null
+  local species
+  species="$(jq -r '.species' <<< "$_RNG_ROLL")"
+  case "$species" in
+    axolotl|dragon|owl|ghost|capybara) ;;
+    *) echo "unexpected species: $species"; return 1 ;;
+  esac
+}
+
+@test "roll_buddy: rarity and stats floor are internally consistent" {
+  source "$RNG_LIB"
+  declare -A floor=([common]=5 [uncommon]=15 [rare]=25 [epic]=35 [legendary]=50)
+  local i
+  for (( i = 0; i < 100; i++ )); do
+    roll_buddy 0 >/dev/null
+    local rarity min
+    rarity="$(jq -r '.rarity' <<< "$_RNG_ROLL")"
+    min="$(jq -r '[.stats.debugging, .stats.patience, .stats.chaos, .stats.wisdom, .stats.snark] | min' <<< "$_RNG_ROLL")"
+    (( min >= ${floor[$rarity]} )) || {
+      echo "mismatch at i=$i: rarity=$rarity min=$min floor=${floor[$rarity]} json=$_RNG_ROLL"
+      return 1
+    }
+  done
+}
+
+@test "roll_buddy: pity propagates — pity=10 produces Rare+ 200/200 times" {
+  source "$RNG_LIB"
+  local i
+  for (( i = 0; i < 200; i++ )); do
+    roll_buddy 10 >/dev/null
+    local rarity
+    rarity="$(jq -r '.rarity' <<< "$_RNG_ROLL")"
+    case "$rarity" in
+      rare|epic|legendary) ;;
+      *) echo "pity leaked $rarity at i=$i"; return 1 ;;
+    esac
+  done
+}
+
+@test "roll_buddy: name is from the rolled species' name_pool" {
+  source "$RNG_LIB"
+  roll_buddy 0 >/dev/null
+  local species name
+  species="$(jq -r '.species' <<< "$_RNG_ROLL")"
+  name="$(jq -r '.name' <<< "$_RNG_ROLL")"
+  run jq -e --arg n "$name" '.name_pool | index($n) != null' "$SPECIES_DIR/$species.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "roll_buddy: invalid pity returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_buddy foo
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid pity_counter"* ]]
+}
+
+@test "roll_buddy: missing species dir causes failure before stdout emission" {
+  export BUDDY_SPECIES_DIR="$BATS_TEST_TMPDIR/empty"
+  mkdir -p "$BUDDY_SPECIES_DIR"
+  source "$RNG_LIB"
+  run --separate-stderr roll_buddy 0
+  [ "$status" -ne 0 ]
+  [ -z "$output" ] || { echo "leaked partial output: $output"; return 1; }
+}
+
 @test "species data: voice matches umbrella plan archetype mapping" {
   local expected=(
     "axolotl:wholesome-cheerleader"

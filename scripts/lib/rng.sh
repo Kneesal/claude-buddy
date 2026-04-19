@@ -496,7 +496,68 @@ roll_stats() {
   printf '%s' "$_RNG_ROLL"
 }
 
+# Public: compose roll_rarity + roll_species + roll_stats + roll_name into a
+# complete inner-buddy JSON object. The caller (P1-3's /buddy:hatch handler)
+# wraps this under a .buddy field inside the buddy.json envelope.
+#
+# Note: `signals` is deliberately absent from the output. Per resolved
+# design decision, P4-1 owns the signals field and its schema — this phase
+# stays ignorant of P4-1's data model.
+#
+# Sets _RNG_ROLL to the JSON and echoes it.
 roll_buddy() {
-  _rng_log "roll_buddy: not yet implemented (Unit 6)"
-  return 2
+  _rng_check_jq "roll_buddy" || return 1
+  local pity="${1:-}"
+  if ! [[ "$pity" =~ ^[0-9]+$ ]]; then
+    _rng_log "roll_buddy: invalid pity_counter '$pity' (must be non-negative integer)"
+    return 1
+  fi
+
+  roll_rarity "$pity" >/dev/null || { _rng_log "roll_buddy: roll_rarity failed"; return 1; }
+  local rarity="$_RNG_ROLL"
+
+  roll_species >/dev/null || { _rng_log "roll_buddy: roll_species failed"; return 1; }
+  local species="$_RNG_ROLL"
+
+  roll_stats "$rarity" "$species" >/dev/null || { _rng_log "roll_buddy: roll_stats failed"; return 1; }
+  local stats_json="$_RNG_ROLL"
+
+  roll_name "$species" >/dev/null || { _rng_log "roll_buddy: roll_name failed"; return 1; }
+  local name="$_RNG_ROLL"
+
+  # Generate 32-char hex ID. Prefer /dev/urandom; fall back to the LCG when
+  # unavailable (weaker but still collision-resistant at realistic use).
+  local id=""
+  if [[ -r /dev/urandom ]]; then
+    id="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \t\n')"
+  fi
+  if [[ -z "$id" || ! "$id" =~ ^[0-9a-f]{32}$ ]]; then
+    # Fallback: four 32-bit LCG pulls → 32 hex chars.
+    local h1 h2 h3 h4
+    _rng_int 0 4294967295 >/dev/null || return 1; h1=$_RNG_RESULT
+    _rng_int 0 4294967295 >/dev/null || return 1; h2=$_RNG_RESULT
+    _rng_int 0 4294967295 >/dev/null || return 1; h3=$_RNG_RESULT
+    _rng_int 0 4294967295 >/dev/null || return 1; h4=$_RNG_RESULT
+    id=$(printf '%08x%08x%08x%08x' "$h1" "$h2" "$h3" "$h4")
+  fi
+
+  _RNG_ROLL="$(jq -n -c \
+    --arg id "$id" \
+    --arg name "$name" \
+    --arg species "$species" \
+    --arg rarity "$rarity" \
+    --argjson stats "$stats_json" \
+    '{
+      id: $id,
+      name: $name,
+      species: $species,
+      rarity: $rarity,
+      shiny: false,
+      stats: $stats,
+      form: "base",
+      level: 1,
+      xp: 0
+    }'
+  )" || { _rng_log "roll_buddy: jq assembly failed"; return 1; }
+  printf '%s' "$_RNG_ROLL"
 }
