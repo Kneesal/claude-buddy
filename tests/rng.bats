@@ -226,11 +226,11 @@ load test_helper
 
 @test "roll_species: 500 rolls hit every species at least 50 times" {
   source "$RNG_LIB"
-  local i species
+  local i
   declare -A counts=()
   for (( i = 0; i < 500; i++ )); do
-    species=$(roll_species)
-    counts[$species]=$(( ${counts[$species]:-0} + 1 ))
+    roll_species >/dev/null
+    counts[$_RNG_ROLL]=$(( ${counts[$_RNG_ROLL]:-0} + 1 ))
   done
   [ "${#counts[@]}" -eq 5 ] || { echo "only hit ${#counts[@]} species"; return 1; }
   for s in axolotl dragon owl ghost capybara; do
@@ -278,7 +278,8 @@ load test_helper
   local i
   declare -A seen=()
   for (( i = 0; i < 200; i++ )); do
-    seen["$(roll_name axolotl)"]=1
+    roll_name axolotl >/dev/null
+    seen["$_RNG_ROLL"]=1
   done
   (( ${#seen[@]} >= 10 )) || { echo "only ${#seen[@]} distinct names"; return 1; }
 }
@@ -302,6 +303,165 @@ load test_helper
   run --separate-stderr roll_name ""
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"invalid species name"* ]]
+}
+
+# ============================================================
+# roll_rarity — Unit 4
+# ============================================================
+
+@test "roll_rarity: returns one of 5 valid rarities" {
+  source "$RNG_LIB"
+  local r
+  r=$(roll_rarity 0)
+  case "$r" in
+    common|uncommon|rare|epic|legendary) ;;
+    *) echo "unexpected: $r"; return 1 ;;
+  esac
+}
+
+@test "roll_rarity: non-integer pity returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_rarity foo
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid pity_counter"* ]]
+}
+
+@test "roll_rarity: negative pity returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_rarity -5
+  [ "$status" -ne 0 ]
+}
+
+@test "roll_rarity: distribution over 10k rolls matches 60/25/10/4/1 within tolerance (seed 42)" {
+  export BUDDY_RNG_SEED=42
+  source "$RNG_LIB"
+  local i
+  declare -A counts=()
+  for (( i = 0; i < 10000; i++ )); do
+    roll_rarity 0 >/dev/null
+    counts[$_RNG_ROLL]=$(( ${counts[$_RNG_ROLL]:-0} + 1 ))
+  done
+  # ±2% absolute bands for well-populated tiers
+  local c="${counts[common]:-0}"       ; (( c >= 5800 && c <= 6200 )) || { echo "common=$c"; return 1; }
+  local u="${counts[uncommon]:-0}"     ; (( u >= 2300 && u <= 2700 )) || { echo "uncommon=$u"; return 1; }
+  local rare_c="${counts[rare]:-0}"    ; (( rare_c >= 800 && rare_c <= 1200 )) || { echo "rare=$rare_c"; return 1; }
+  # Absolute bands for low-pop tiers (σ≈20 at n=400 for epic, σ≈10 at n=100 for legendary)
+  local e="${counts[epic]:-0}"         ; (( e >= 200 && e <= 600 )) || { echo "epic=$e"; return 1; }
+  local l="${counts[legendary]:-0}"    ; (( l >= 40 && l <= 200 )) || { echo "legendary=$l"; return 1; }
+}
+
+@test "roll_rarity: distribution holds across 3 different seeds" {
+  local seed
+  for seed in 1 99 12345; do
+    export BUDDY_RNG_SEED=$seed
+    run bash -c '
+      source "'"$RNG_LIB"'"
+      declare -A counts=()
+      for (( i = 0; i < 10000; i++ )); do
+        roll_rarity 0 >/dev/null
+        counts[$_RNG_ROLL]=$(( ${counts[$_RNG_ROLL]:-0} + 1 ))
+      done
+      c="${counts[common]:-0}"
+      u="${counts[uncommon]:-0}"
+      rare_c="${counts[rare]:-0}"
+      e="${counts[epic]:-0}"
+      l="${counts[legendary]:-0}"
+      (( c >= 5800 && c <= 6200 )) || { echo "common=$c"; exit 1; }
+      (( u >= 2300 && u <= 2700 )) || { echo "uncommon=$u"; exit 2; }
+      (( rare_c >= 800 && rare_c <= 1200 )) || { echo "rare=$rare_c"; exit 3; }
+      (( e >= 200 && e <= 600 )) || { echo "epic=$e"; exit 4; }
+      (( l >= 40 && l <= 200 )) || { echo "legendary=$l"; exit 5; }
+    '
+    [ "$status" -eq 0 ] || { echo "seed $seed: $output"; return 1; }
+  done
+}
+
+@test "roll_rarity: pity trigger at 10 never returns common or uncommon over 1000 rolls" {
+  source "$RNG_LIB"
+  local i
+  for (( i = 0; i < 1000; i++ )); do
+    roll_rarity 10 >/dev/null
+    case "$_RNG_ROLL" in
+      rare|epic|legendary) ;;
+      *) echo "pity leaked $_RNG_ROLL at i=$i"; return 1 ;;
+    esac
+  done
+}
+
+@test "roll_rarity: pity trigger at 11 also forces Rare+" {
+  source "$RNG_LIB"
+  local i
+  for (( i = 0; i < 500; i++ )); do
+    roll_rarity 11 >/dev/null
+    case "$_RNG_ROLL" in
+      rare|epic|legendary) ;;
+      *) echo "pity leaked $_RNG_ROLL at i=$i"; return 1 ;;
+    esac
+  done
+}
+
+@test "roll_rarity: pity at 9 is still normal distribution (can roll common)" {
+  source "$RNG_LIB"
+  local i common_seen=0
+  for (( i = 0; i < 500; i++ )); do
+    roll_rarity 9 >/dev/null
+    [ "$_RNG_ROLL" = "common" ] && common_seen=1
+  done
+  [ "$common_seen" -eq 1 ] || { echo "never rolled common at pity=9"; return 1; }
+}
+
+@test "roll_rarity: pity forced distribution hits all 3 Rare+ tiers over 1500 rolls" {
+  source "$RNG_LIB"
+  local i
+  declare -A counts=()
+  for (( i = 0; i < 1500; i++ )); do
+    roll_rarity 10 >/dev/null
+    counts[$_RNG_ROLL]=$(( ${counts[$_RNG_ROLL]:-0} + 1 ))
+  done
+  (( ${counts[rare]:-0} > 0 )) || { echo "no rare"; return 1; }
+  (( ${counts[epic]:-0} > 0 )) || { echo "no epic"; return 1; }
+  (( ${counts[legendary]:-0} > 0 )) || { echo "no legendary"; return 1; }
+}
+
+# ============================================================
+# next_pity_counter — Unit 4
+# ============================================================
+
+@test "next_pity_counter: common increments" {
+  source "$RNG_LIB"
+  [ "$(next_pity_counter 0 common)" = "1" ]
+  [ "$(next_pity_counter 5 common)" = "6" ]
+  [ "$(next_pity_counter 9 common)" = "10" ]
+  [ "$(next_pity_counter 10 common)" = "11" ]
+}
+
+@test "next_pity_counter: uncommon leaves counter unchanged" {
+  source "$RNG_LIB"
+  [ "$(next_pity_counter 0 uncommon)" = "0" ]
+  [ "$(next_pity_counter 3 uncommon)" = "3" ]
+  [ "$(next_pity_counter 9 uncommon)" = "9" ]
+}
+
+@test "next_pity_counter: rare/epic/legendary reset to 0" {
+  source "$RNG_LIB"
+  [ "$(next_pity_counter 10 rare)" = "0" ]
+  [ "$(next_pity_counter 7 epic)" = "0" ]
+  [ "$(next_pity_counter 5 legendary)" = "0" ]
+  [ "$(next_pity_counter 0 rare)" = "0" ]
+}
+
+@test "next_pity_counter: invalid rarity returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr next_pity_counter 0 puddle
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"unknown rarity"* ]]
+}
+
+@test "next_pity_counter: non-integer current returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr next_pity_counter abc common
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid current"* ]]
 }
 
 @test "species data: voice matches umbrella plan archetype mapping" {

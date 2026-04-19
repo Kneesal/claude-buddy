@@ -95,6 +95,12 @@ if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
   _RNG_JQ_MISSING=0
   _RNG_LCG_STATE=0
 
+  # Globals used by the no-subshell API (see _rng_int docstring).
+  # _rng_int sets _RNG_RESULT; public roll_* functions set _RNG_ROLL for
+  # callers that want state persistence via the no-subshell pattern.
+  _RNG_RESULT=0
+  _RNG_ROLL=""
+
   # Check jq presence once at source. Missing jq → every public function
   # short-circuits with an error, mirroring state.sh's log-and-return discipline.
   if ! command -v jq >/dev/null 2>&1; then
@@ -164,7 +170,20 @@ _rng_seed() {
   _RNG_LCG_STATE=$(( seed % _RNG_LCG_M ))
 }
 
-# Return a random integer in [min, max], inclusive both ends.
+# Generate a random integer in [min, max], inclusive both ends.
+# Writes the result to the global _RNG_RESULT and echoes it to stdout.
+#
+# IMPORTANT: bash `$(..)` command substitution forks a subshell, which means
+# any state changes inside the subshell — including LCG advancement — are lost
+# when the subshell exits. For deterministic sequences via BUDDY_RNG_SEED, the
+# caller MUST use the no-subshell pattern:
+#     _rng_int 1 100; val=$_RNG_RESULT     ← state persists; deterministic
+#     val=$(_rng_int 1 100)                 ← state resets each call; only first deterministic
+#
+# This pattern is used by every internal _rng_int consumer (roll_rarity,
+# roll_stats, roll_species, roll_name, roll_buddy). The stdout echo exists
+# only for ad-hoc interactive use where determinism doesn't matter.
+#
 # Uses the LCG when BUDDY_RNG_SEED is set (deterministic), otherwise $RANDOM.
 # Modulo bias on range 1..100 against $RANDOM (span 32768) is ~0.3% per bucket,
 # well within the ±2% distribution-test tolerance. For ranges > ~1000 this
@@ -186,11 +205,15 @@ _rng_int() {
   if [[ -n "${BUDDY_RNG_SEED:-}" ]]; then
     # LCG step: state = (a * state + c) mod m
     _RNG_LCG_STATE=$(( (_RNG_LCG_A * _RNG_LCG_STATE + _RNG_LCG_C) % _RNG_LCG_M ))
-    raw=$_RNG_LCG_STATE
+    # Numerical Recipes LCG has short-period low-order bits; shift right 16 to
+    # use the high bits, which have full period and pass uniformity tests for
+    # the small ranges this library uses.
+    raw=$(( _RNG_LCG_STATE >> 16 ))
   else
     raw=$RANDOM
   fi
-  printf '%d' $(( min + (raw % range) ))
+  _RNG_RESULT=$(( min + (raw % range) ))
+  printf '%d' "$_RNG_RESULT"
 }
 
 # Guard used at the top of every public function: fail fast if jq is missing.
@@ -232,6 +255,7 @@ _rng_load_species() {
 
 # Public: pick a species uniformly from the available species JSON files.
 # Honors BUDDY_SPECIES_DIR for test fixtures.
+# Sets _RNG_ROLL and echoes to stdout (see _rng_int docstring re: subshell state).
 roll_species() {
   _rng_check_jq "roll_species" || return 1
   local dir
@@ -251,12 +275,13 @@ roll_species() {
     _rng_log "roll_species: no species files in $dir"
     return 1
   fi
-  local idx
-  idx=$(_rng_int 1 "$count") || return 1
-  printf '%s' "${files[$((idx - 1))]}"
+  _rng_int 1 "$count" >/dev/null || return 1
+  _RNG_ROLL="${files[$((_RNG_RESULT - 1))]}"
+  printf '%s' "$_RNG_ROLL"
 }
 
 # Public: pick a random name from the given species' name_pool.
+# Sets _RNG_ROLL and echoes to stdout.
 roll_name() {
   _rng_check_jq "roll_name" || return 1
   local species="${1:-}"
@@ -272,15 +297,70 @@ roll_name() {
     _rng_log "roll_name: empty or invalid name_pool for $species"
     return 1
   fi
-  local idx
-  idx=$(_rng_int 1 "$count") || return 1
-  printf '%s' "$(printf '%s' "$json" | jq -r ".name_pool[$((idx - 1))]")"
+  _rng_int 1 "$count" >/dev/null || return 1
+  _RNG_ROLL="$(printf '%s' "$json" | jq -r ".name_pool[$((_RNG_RESULT - 1))]")"
+  printf '%s' "$_RNG_ROLL"
 }
 
-# Placeholders — implemented in Units 4–6.
+# Public: roll a rarity. Distribution is 60/25/10/4/1 (Common/Uncommon/Rare/
+# Epic/Legendary). When pity_counter >= PITY_THRESHOLD, the roll is forced to
+# Rare+ with a 10:4:1 internal split that preserves the natural ratio.
+# Sets _RNG_ROLL and echoes to stdout.
 roll_rarity() {
-  _rng_log "roll_rarity: not yet implemented (Unit 4)"
-  return 2
+  local pity="${1:-}"
+  if ! [[ "$pity" =~ ^[0-9]+$ ]]; then
+    _rng_log "roll_rarity: invalid pity_counter '$pity' (must be non-negative integer)"
+    return 1
+  fi
+
+  local r
+  if (( pity >= PITY_THRESHOLD )); then
+    # Forced Rare+: 1/15 legendary, 4/15 epic, 10/15 rare.
+    _rng_int 1 "$PITY_WEIGHT_TOTAL" >/dev/null || return 1
+    r=$_RNG_RESULT
+    if (( r <= PITY_CUT_LEGENDARY )); then
+      _RNG_ROLL="legendary"
+    elif (( r <= PITY_CUT_EPIC )); then
+      _RNG_ROLL="epic"
+    else
+      _RNG_ROLL="rare"
+    fi
+    printf '%s' "$_RNG_ROLL"
+    return 0
+  fi
+
+  _rng_int 1 100 >/dev/null || return 1
+  r=$_RNG_RESULT
+  if   (( r <= RARITY_CUT_COMMON ));   then _RNG_ROLL="common"
+  elif (( r <= RARITY_CUT_UNCOMMON )); then _RNG_ROLL="uncommon"
+  elif (( r <= RARITY_CUT_RARE ));     then _RNG_ROLL="rare"
+  elif (( r <= RARITY_CUT_EPIC ));     then _RNG_ROLL="epic"
+  else                                      _RNG_ROLL="legendary"
+  fi
+  printf '%s' "$_RNG_ROLL"
+}
+
+# Public: compute the next pity counter given the current value and the
+# rarity that was just rolled.
+#   common    → current + 1
+#   uncommon  → current (unchanged — neutral per origin ticket + umbrella D8)
+#   rare/epic/legendary → 0
+next_pity_counter() {
+  local current="${1:-}"
+  local rarity="${2:-}"
+  if ! [[ "$current" =~ ^[0-9]+$ ]]; then
+    _rng_log "next_pity_counter: invalid current '$current'"
+    return 1
+  fi
+  case "$rarity" in
+    common)                    printf '%d' $(( current + 1 )) ;;
+    uncommon)                  printf '%d' "$current" ;;
+    rare|epic|legendary)       printf '%d' 0 ;;
+    *)
+      _rng_log "next_pity_counter: unknown rarity '$rarity'"
+      return 1
+      ;;
+  esac
 }
 
 roll_stats() {
@@ -290,10 +370,5 @@ roll_stats() {
 
 roll_buddy() {
   _rng_log "roll_buddy: not yet implemented (Unit 6)"
-  return 2
-}
-
-next_pity_counter() {
-  _rng_log "next_pity_counter: not yet implemented (Unit 4)"
   return 2
 }
