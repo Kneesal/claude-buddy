@@ -202,25 +202,89 @@ _rng_check_jq() {
   return 0
 }
 
-# Placeholders — implemented in Units 3–6.
-# They return non-zero so tests for later units fail loudly until implemented.
+# Load a species JSON file into the per-process cache and echo its contents.
+# Caches by species name on first read; subsequent reads are O(1).
+_rng_load_species() {
+  local species="$1"
+  if ! _rng_valid_species_name "$species"; then
+    _rng_log "_rng_load_species: invalid species name"
+    return 1
+  fi
+  if [[ -n "${_RNG_SPECIES_CACHE[$species]:-}" ]]; then
+    printf '%s' "${_RNG_SPECIES_CACHE[$species]}"
+    return 0
+  fi
+  local dir
+  dir="$(_rng_species_dir)" || return 1
+  local file="$dir/$species.json"
+  if [[ ! -f "$file" ]]; then
+    _rng_log "_rng_load_species: $file not found"
+    return 1
+  fi
+  local json
+  if ! json="$(jq -c '.' "$file" 2>/dev/null)"; then
+    _rng_log "_rng_load_species: failed to parse $file"
+    return 1
+  fi
+  _RNG_SPECIES_CACHE[$species]="$json"
+  printf '%s' "$json"
+}
+
+# Public: pick a species uniformly from the available species JSON files.
+# Honors BUDDY_SPECIES_DIR for test fixtures.
+roll_species() {
+  _rng_check_jq "roll_species" || return 1
+  local dir
+  dir="$(_rng_species_dir)" || { _rng_log "roll_species: could not resolve species dir"; return 1; }
+  if [[ ! -d "$dir" ]]; then
+    _rng_log "roll_species: $dir is not a directory"
+    return 1
+  fi
+  # Collect species filenames (without .json) into an array.
+  local files=()
+  local f
+  while IFS= read -r f; do
+    files+=("$(basename "$f" .json)")
+  done < <(find "$dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null | sort)
+  local count="${#files[@]}"
+  if (( count == 0 )); then
+    _rng_log "roll_species: no species files in $dir"
+    return 1
+  fi
+  local idx
+  idx=$(_rng_int 1 "$count") || return 1
+  printf '%s' "${files[$((idx - 1))]}"
+}
+
+# Public: pick a random name from the given species' name_pool.
+roll_name() {
+  _rng_check_jq "roll_name" || return 1
+  local species="${1:-}"
+  if ! _rng_valid_species_name "$species"; then
+    _rng_log "roll_name: invalid species name '$species'"
+    return 1
+  fi
+  local json
+  json="$(_rng_load_species "$species")" || return 1
+  local count
+  count="$(printf '%s' "$json" | jq -r '.name_pool | length' 2>/dev/null)"
+  if ! [[ "$count" =~ ^[0-9]+$ ]] || (( count == 0 )); then
+    _rng_log "roll_name: empty or invalid name_pool for $species"
+    return 1
+  fi
+  local idx
+  idx=$(_rng_int 1 "$count") || return 1
+  printf '%s' "$(printf '%s' "$json" | jq -r ".name_pool[$((idx - 1))]")"
+}
+
+# Placeholders — implemented in Units 4–6.
 roll_rarity() {
   _rng_log "roll_rarity: not yet implemented (Unit 4)"
   return 2
 }
 
-roll_species() {
-  _rng_log "roll_species: not yet implemented (Unit 3)"
-  return 2
-}
-
 roll_stats() {
   _rng_log "roll_stats: not yet implemented (Unit 5)"
-  return 2
-}
-
-roll_name() {
-  _rng_log "roll_name: not yet implemented (Unit 3)"
   return 2
 }
 

@@ -210,6 +210,100 @@ load test_helper
   done
 }
 
+# ============================================================
+# roll_species — Unit 3
+# ============================================================
+
+@test "roll_species: returns one of the 5 launch species" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_species
+  [ "$status" -eq 0 ]
+  case "$output" in
+    axolotl|dragon|owl|ghost|capybara) ;;
+    *) echo "unexpected species: $output"; return 1 ;;
+  esac
+}
+
+@test "roll_species: 500 rolls hit every species at least 50 times" {
+  source "$RNG_LIB"
+  local i species
+  declare -A counts=()
+  for (( i = 0; i < 500; i++ )); do
+    species=$(roll_species)
+    counts[$species]=$(( ${counts[$species]:-0} + 1 ))
+  done
+  [ "${#counts[@]}" -eq 5 ] || { echo "only hit ${#counts[@]} species"; return 1; }
+  for s in axolotl dragon owl ghost capybara; do
+    local c="${counts[$s]:-0}"
+    (( c >= 50 )) || { echo "$s only rolled $c/500 times"; return 1; }
+  done
+}
+
+@test "roll_species: empty species dir returns error" {
+  export BUDDY_SPECIES_DIR="$BATS_TEST_TMPDIR/empty-species"
+  mkdir -p "$BUDDY_SPECIES_DIR"
+  source "$RNG_LIB"
+  run --separate-stderr roll_species
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"no species files"* ]]
+}
+
+@test "roll_species: missing species dir returns error" {
+  export BUDDY_SPECIES_DIR="$BATS_TEST_TMPDIR/does-not-exist"
+  source "$RNG_LIB"
+  run --separate-stderr roll_species
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not a directory"* ]]
+}
+
+# ============================================================
+# roll_name — Unit 3
+# ============================================================
+
+@test "roll_name: returns a name from the species' name_pool" {
+  source "$RNG_LIB"
+  local species
+  for species in axolotl dragon owl ghost capybara; do
+    local name
+    name=$(roll_name "$species")
+    [ -n "$name" ] || { echo "empty name for $species"; return 1; }
+    # Verify the returned name is actually in the pool
+    run jq -e --arg n "$name" '.name_pool | index($n) != null' "$SPECIES_DIR/$species.json"
+    [ "$status" -eq 0 ] || { echo "$name not in $species pool"; return 1; }
+  done
+}
+
+@test "roll_name: 200 rolls for one species produce at least 10 distinct names" {
+  source "$RNG_LIB"
+  local i
+  declare -A seen=()
+  for (( i = 0; i < 200; i++ )); do
+    seen["$(roll_name axolotl)"]=1
+  done
+  (( ${#seen[@]} >= 10 )) || { echo "only ${#seen[@]} distinct names"; return 1; }
+}
+
+@test "roll_name: nonexistent species returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_name nonexistent
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not found"* ]]
+}
+
+@test "roll_name: path traversal attempt is rejected" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_name "../../etc/passwd"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid species name"* ]]
+}
+
+@test "roll_name: empty species arg returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_name ""
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid species name"* ]]
+}
+
 @test "species data: voice matches umbrella plan archetype mapping" {
   local expected=(
     "axolotl:wholesome-cheerleader"
