@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "species": "axolotl",
+  "voice": "wholesome-cheerleader",
+  "base_stats_weights": {
+    "debugging": "neutral",
+    "patience": "peak-prefer",
+    "chaos": "dump-prefer",
+    "wisdom": "neutral",
+    "snark": "neutral"
+  },
+  "name_pool": [
+    "Pip", "Bean", "Spud", "Mochi", "Toast",
+    "Peach", "Dumpling", "Blob", "Noodle", "Biscuit",
+    "Puddle", "Sprout", "Gummy", "Custard", "Taffy",
+    "Marshmallow", "Bubble", "Cloud", "Jelly", "Tofu",
+    "Glimmer", "Pickle"
+  ],
+  "evolution_paths": {},
+  "line_banks": {},
+  "sprite": null
+}

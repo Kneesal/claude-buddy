@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "species": "owl",
+  "voice": "dry-scholar",
+  "base_stats_weights": {
+    "debugging": "neutral",
+    "patience": "neutral",
+    "chaos": "neutral",
+    "wisdom": "peak-prefer",
+    "snark": "dump-prefer"
+  },
+  "name_pool": [
+    "Minerva", "Archimedes", "Hedwig", "Newton", "Kepler",
+    "Bohr", "Darwin", "Euler", "Fermat", "Galileo",
+    "Huxley", "Ptolemy", "Quine", "Tycho", "Voltaire",
+    "Whitcomb", "Briggs", "Plinius", "Vesta", "Otho",
+    "Edith", "Rook"
+  ],
+  "evolution_paths": {},
+  "line_banks": {},
+  "sprite": null
+}

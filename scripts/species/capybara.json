@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "species": "capybara",
+  "voice": "chill-zen",
+  "base_stats_weights": {
+    "debugging": "dump-prefer",
+    "patience": "peak-prefer",
+    "chaos": "neutral",
+    "wisdom": "neutral",
+    "snark": "neutral"
+  },
+  "name_pool": [
+    "Bruno", "Cuzco", "Mango", "Poncho", "Nacho",
+    "Tulum", "Pepino", "Churro", "Chico", "Mingo",
+    "Paco", "Javi", "Luna", "Piru", "Tino",
+    "Salsa", "Coco", "Pablo", "Guava", "Zenzi",
+    "Basil", "Moss"
+  ],
+  "evolution_paths": {},
+  "line_banks": {},
+  "sprite": null
+}

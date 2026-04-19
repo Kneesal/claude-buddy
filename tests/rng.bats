@@ -128,3 +128,101 @@ load test_helper
   done
   [ "${#seen[@]}" -eq 10 ]
 }
+
+# ============================================================
+# Species data integrity — Unit 2
+# ============================================================
+
+@test "species data: all 5 species files exist" {
+  [ -f "$SPECIES_DIR/axolotl.json" ]
+  [ -f "$SPECIES_DIR/dragon.json" ]
+  [ -f "$SPECIES_DIR/owl.json" ]
+  [ -f "$SPECIES_DIR/ghost.json" ]
+  [ -f "$SPECIES_DIR/capybara.json" ]
+  local count
+  count=$(find "$SPECIES_DIR" -maxdepth 1 -name '*.json' -type f | wc -l)
+  [ "$count" -eq 5 ]
+}
+
+@test "species data: each file is valid JSON" {
+  for f in "$SPECIES_DIR"/*.json; do
+    run jq -e '.' "$f"
+    [ "$status" -eq 0 ] || { echo "invalid JSON: $f"; return 1; }
+  done
+}
+
+@test "species data: each file has required top-level keys" {
+  for f in "$SPECIES_DIR"/*.json; do
+    run jq -e '
+      has("schemaVersion") and
+      has("species") and
+      has("voice") and
+      has("base_stats_weights") and
+      has("name_pool") and
+      has("evolution_paths") and
+      has("line_banks") and
+      has("sprite")
+    ' "$f"
+    [ "$status" -eq 0 ] || { echo "missing keys in: $f"; return 1; }
+  done
+}
+
+@test "species data: species field matches filename for every file" {
+  for f in "$SPECIES_DIR"/*.json; do
+    local basename species_field
+    basename=$(basename "$f" .json)
+    species_field=$(jq -r '.species' "$f")
+    [ "$basename" = "$species_field" ] || { echo "mismatch in $f: $basename vs $species_field"; return 1; }
+  done
+}
+
+@test "species data: base_stats_weights covers all 5 stats with exactly one peak-prefer and one dump-prefer" {
+  for f in "$SPECIES_DIR"/*.json; do
+    run jq -e '
+      .base_stats_weights
+      | (has("debugging") and has("patience") and has("chaos") and has("wisdom") and has("snark"))
+      and (to_entries | length == 5)
+      and ([.[] | select(. == "peak-prefer")] | length == 1)
+      and ([.[] | select(. == "dump-prefer")] | length == 1)
+      and ([.[] | select(. == "neutral")] | length == 3)
+    ' "$f"
+    [ "$status" -eq 0 ] || { echo "bad base_stats_weights in $f"; return 1; }
+  done
+}
+
+@test "species data: peak-prefer stat differs from dump-prefer stat" {
+  for f in "$SPECIES_DIR"/*.json; do
+    local peak dump
+    peak=$(jq -r '.base_stats_weights | to_entries | map(select(.value == "peak-prefer"))[0].key' "$f")
+    dump=$(jq -r '.base_stats_weights | to_entries | map(select(.value == "dump-prefer"))[0].key' "$f")
+    [ "$peak" != "$dump" ] || { echo "peak == dump in $f"; return 1; }
+  done
+}
+
+@test "species data: name_pool has >= 20 unique non-empty strings per file" {
+  for f in "$SPECIES_DIR"/*.json; do
+    run jq -e '
+      (.name_pool | length) >= 20
+      and (.name_pool | all(type == "string" and length > 0))
+      and ((.name_pool | length) == (.name_pool | unique | length))
+    ' "$f"
+    [ "$status" -eq 0 ] || { echo "bad name_pool in $f"; return 1; }
+  done
+}
+
+@test "species data: voice matches umbrella plan archetype mapping" {
+  local expected=(
+    "axolotl:wholesome-cheerleader"
+    "dragon:chaotic-gremlin"
+    "owl:dry-scholar"
+    "ghost:deadpan-night"
+    "capybara:chill-zen"
+  )
+  for entry in "${expected[@]}"; do
+    local species="${entry%%:*}"
+    local want="${entry#*:}"
+    local got
+    got=$(jq -r '.voice' "$SPECIES_DIR/$species.json")
+    [ "$got" = "$want" ] || { echo "$species voice: got '$got', want '$want'"; return 1; }
+  done
+}
