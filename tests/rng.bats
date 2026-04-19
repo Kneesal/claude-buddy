@@ -464,6 +464,140 @@ load test_helper
   [[ "$stderr" == *"invalid current"* ]]
 }
 
+# ============================================================
+# roll_stats — Unit 5
+# ============================================================
+
+@test "roll_stats: output has exactly the 5 stat keys" {
+  source "$RNG_LIB"
+  roll_stats common axolotl >/dev/null
+  run jq -e '
+    (keys | sort) == ["chaos", "debugging", "patience", "snark", "wisdom"]
+  ' <<< "$_RNG_ROLL"
+  [ "$status" -eq 0 ]
+}
+
+@test "roll_stats: all values are integers in [0, 100]" {
+  source "$RNG_LIB"
+  roll_stats common axolotl >/dev/null
+  run jq -e '
+    [.debugging, .patience, .chaos, .wisdom, .snark]
+    | all(type == "number" and . >= 0 and . <= 100)
+  ' <<< "$_RNG_ROLL"
+  [ "$status" -eq 0 ]
+}
+
+@test "roll_stats: floor enforcement — legendary across all species, 200 rolls each, every stat >= 50" {
+  source "$RNG_LIB"
+  local species i
+  for species in axolotl dragon owl ghost capybara; do
+    for (( i = 0; i < 200; i++ )); do
+      roll_stats legendary "$species" >/dev/null
+      local min
+      min="$(jq -r '[.debugging, .patience, .chaos, .wisdom, .snark] | min' <<< "$_RNG_ROLL")"
+      (( min >= 50 )) || { echo "$species roll $i: min=$min, json=$_RNG_ROLL"; return 1; }
+    done
+  done
+}
+
+@test "roll_stats: floor enforcement — 50 rolls × 25 (rarity,species) combos, every stat >= rarity floor" {
+  source "$RNG_LIB"
+  declare -A floor=([common]=5 [uncommon]=15 [rare]=25 [epic]=35 [legendary]=50)
+  local rarity species i
+  for rarity in common uncommon rare epic legendary; do
+    for species in axolotl dragon owl ghost capybara; do
+      for (( i = 0; i < 50; i++ )); do
+        roll_stats "$rarity" "$species" >/dev/null
+        local min
+        min="$(jq -r '[.debugging, .patience, .chaos, .wisdom, .snark] | min' <<< "$_RNG_ROLL")"
+        (( min >= ${floor[$rarity]} )) || {
+          echo "$rarity $species roll $i: min=$min, floor=${floor[$rarity]}, json=$_RNG_ROLL"
+          return 1
+        }
+      done
+    done
+  done
+}
+
+@test "roll_stats: shape — exactly one peak (>= floor+41), one dump (<= floor+14), three mids" {
+  source "$RNG_LIB"
+  local i
+  for (( i = 0; i < 100; i++ )); do
+    roll_stats legendary axolotl >/dev/null
+    # floor=50; peak in [91,100]; dump in [50,64]; mid in [65,90]
+    run jq -e '
+      [.debugging, .patience, .chaos, .wisdom, .snark] as $stats
+      | ([$stats[] | select(. >= 91)] | length) == 1
+      and ([$stats[] | select(. <= 64)] | length) == 1
+      and ([$stats[] | select(. >= 65 and . <= 90)] | length) == 3
+    ' <<< "$_RNG_ROLL"
+    [ "$status" -eq 0 ] || { echo "bad shape at i=$i: $_RNG_ROLL"; return 1; }
+  done
+}
+
+@test "roll_stats: species bias — patience is the peak for axolotl in > 55% of 1000 rolls" {
+  export BUDDY_RNG_SEED=777
+  source "$RNG_LIB"
+  local i peak_count=0
+  for (( i = 0; i < 1000; i++ )); do
+    roll_stats legendary axolotl >/dev/null
+    local peak_stat
+    peak_stat="$(jq -r 'to_entries | max_by(.value).key' <<< "$_RNG_ROLL")"
+    if [ "$peak_stat" = "patience" ]; then
+      peak_count=$(( peak_count + 1 ))
+    fi
+  done
+  # Expected ~680 (0.68 × 1000); threshold 550 gives plenty of headroom
+  (( peak_count > 550 )) || { echo "patience peaked only $peak_count/1000 times"; return 1; }
+}
+
+@test "roll_stats: species bias — chaos is the dump for axolotl in > 55% of 1000 rolls" {
+  export BUDDY_RNG_SEED=333
+  source "$RNG_LIB"
+  local i dump_count=0
+  for (( i = 0; i < 1000; i++ )); do
+    roll_stats legendary axolotl >/dev/null
+    local dump_stat
+    dump_stat="$(jq -r 'to_entries | min_by(.value).key' <<< "$_RNG_ROLL")"
+    if [ "$dump_stat" = "chaos" ]; then
+      dump_count=$(( dump_count + 1 ))
+    fi
+  done
+  (( dump_count > 550 )) || { echo "chaos dumped only $dump_count/1000 times"; return 1; }
+}
+
+@test "roll_stats: invalid rarity returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_stats not-a-rarity axolotl
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid rarity"* ]]
+}
+
+@test "roll_stats: invalid species name returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_stats common "../etc/passwd"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"invalid species name"* ]]
+}
+
+@test "roll_stats: nonexistent species returns error" {
+  source "$RNG_LIB"
+  run --separate-stderr roll_stats common nonexistent-species
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not found"* ]]
+}
+
+@test "roll_stats: legendary never produces a value > 100 (peak clamp)" {
+  source "$RNG_LIB"
+  local i
+  for (( i = 0; i < 200; i++ )); do
+    roll_stats legendary axolotl >/dev/null
+    local max
+    max="$(jq -r '[.debugging, .patience, .chaos, .wisdom, .snark] | max' <<< "$_RNG_ROLL")"
+    (( max <= 100 )) || { echo "overflow at i=$i: max=$max json=$_RNG_ROLL"; return 1; }
+  done
+}
+
 @test "species data: voice matches umbrella plan archetype mapping" {
   local expected=(
     "axolotl:wholesome-cheerleader"

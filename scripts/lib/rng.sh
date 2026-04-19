@@ -65,10 +65,11 @@ if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
     [legendary]=50
   )
 
-  # Stat-shape offsets relative to floor. Peak lands high (floor+40 to 100),
-  # dump lands low (floor to floor+15), mids split the middle.
-  readonly _RNG_PEAK_OFFSET_LO=40
-  readonly _RNG_DUMP_OFFSET_HI=15
+  # Stat-shape offsets relative to floor. Ranges are disjoint so peak/dump/mid
+  # counts are unambiguous: dump [floor, floor+14], mid [floor+15, floor+40],
+  # peak [floor+41, 100]. At legendary floor=50: dump [50,64], mid [65,90], peak [91,100].
+  readonly _RNG_PEAK_OFFSET_LO=41
+  readonly _RNG_DUMP_OFFSET_HI=14
   readonly _RNG_MID_OFFSET_LO=15
   readonly _RNG_MID_OFFSET_HI=40
 
@@ -363,9 +364,136 @@ next_pity_counter() {
   esac
 }
 
+# Internal: extract the peak-prefer stat name from a species JSON blob.
+# Echoes to stdout. Sets _RNG_STAT_PEAK.
+_rng_species_peak() {
+  local json="$1"
+  _RNG_STAT_PEAK="$(printf '%s' "$json" | jq -r '
+    .base_stats_weights | to_entries | map(select(.value == "peak-prefer"))[0].key
+  ')"
+  [[ -n "$_RNG_STAT_PEAK" && "$_RNG_STAT_PEAK" != "null" ]] || return 1
+  printf '%s' "$_RNG_STAT_PEAK"
+}
+
+# Internal: extract the dump-prefer stat name from a species JSON blob.
+_rng_species_dump() {
+  local json="$1"
+  _RNG_STAT_DUMP="$(printf '%s' "$json" | jq -r '
+    .base_stats_weights | to_entries | map(select(.value == "dump-prefer"))[0].key
+  ')"
+  [[ -n "$_RNG_STAT_DUMP" && "$_RNG_STAT_DUMP" != "null" ]] || return 1
+  printf '%s' "$_RNG_STAT_DUMP"
+}
+
+# Public: generate a 5-stat object with rarity floor + one-peak/one-dump/
+# three-mid shape, ~60% species-weight bias on peak and dump slot selection.
+# Sets _RNG_ROLL to the JSON and echoes it.
 roll_stats() {
-  _rng_log "roll_stats: not yet implemented (Unit 5)"
-  return 2
+  _rng_check_jq "roll_stats" || return 1
+  local rarity="${1:-}"
+  local species="${2:-}"
+
+  if [[ -z "${_RNG_FLOORS[$rarity]:-}" ]]; then
+    _rng_log "roll_stats: invalid rarity '$rarity'"
+    return 1
+  fi
+  if ! _rng_valid_species_name "$species"; then
+    _rng_log "roll_stats: invalid species name '$species'"
+    return 1
+  fi
+
+  local json
+  json="$(_rng_load_species "$species")" || return 1
+
+  local peak_pref dump_pref
+  peak_pref="$(_rng_species_peak "$json")" || {
+    _rng_log "roll_stats: $species has no peak-prefer stat"
+    return 1
+  }
+  dump_pref="$(_rng_species_dump "$json")" || {
+    _rng_log "roll_stats: $species has no dump-prefer stat"
+    return 1
+  }
+  if [[ "$peak_pref" == "$dump_pref" ]]; then
+    _rng_log "roll_stats: $species has peak-prefer == dump-prefer ($peak_pref); species data is malformed"
+    return 1
+  fi
+
+  local floor="${_RNG_FLOORS[$rarity]}"
+  # Clamp range ceilings to 100 so peak cannot exceed the stat cap.
+  local peak_lo=$(( floor + _RNG_PEAK_OFFSET_LO ))
+  local peak_hi=100
+  local dump_lo=$floor
+  local dump_hi=$(( floor + _RNG_DUMP_OFFSET_HI ))
+  local mid_lo=$(( floor + _RNG_MID_OFFSET_LO ))
+  local mid_hi=$(( floor + _RNG_MID_OFFSET_HI ))
+  (( peak_lo > peak_hi )) && peak_lo=$peak_hi   # defensive; floor 50 + 40 = 90, fine
+  (( dump_hi > 100 )) && dump_hi=100
+  (( mid_hi > 100 )) && mid_hi=100
+
+  # Pick peak slot: 60% species-preferred, else uniform over all 5 stats.
+  _rng_int 1 100 >/dev/null || return 1
+  local peak_stat
+  if (( _RNG_RESULT <= _RNG_SPECIES_BIAS )); then
+    peak_stat="$peak_pref"
+  else
+    _rng_int 1 5 >/dev/null || return 1
+    peak_stat="${_RNG_STATS[$((_RNG_RESULT - 1))]}"
+  fi
+
+  # Pick dump slot: 60% species-preferred, else uniform over all 5 stats.
+  # On collision with peak, fall back to the species' dump_pref (guaranteed
+  # != peak by prior check above if species was sane; if the uniform draw
+  # happened to hit peak_stat and peak_stat == peak_pref, dump_pref is still
+  # safe). If that still collides (peak chose the non-preferred uniform path
+  # and landed on dump_pref), pick uniformly over the remaining 4 stats.
+  _rng_int 1 100 >/dev/null || return 1
+  local dump_stat
+  if (( _RNG_RESULT <= _RNG_SPECIES_BIAS )); then
+    dump_stat="$dump_pref"
+  else
+    _rng_int 1 5 >/dev/null || return 1
+    dump_stat="${_RNG_STATS[$((_RNG_RESULT - 1))]}"
+  fi
+  if [[ "$dump_stat" == "$peak_stat" ]]; then
+    if [[ "$dump_pref" != "$peak_stat" ]]; then
+      dump_stat="$dump_pref"
+    else
+      # Uniform over 4 non-peak stats
+      local pool=()
+      local s
+      for s in "${_RNG_STATS[@]}"; do
+        [[ "$s" != "$peak_stat" ]] && pool+=("$s")
+      done
+      _rng_int 1 "${#pool[@]}" >/dev/null || return 1
+      dump_stat="${pool[$((_RNG_RESULT - 1))]}"
+    fi
+  fi
+
+  # Roll each stat in canonical order.
+  local -A stat_values=()
+  local s
+  for s in "${_RNG_STATS[@]}"; do
+    if [[ "$s" == "$peak_stat" ]]; then
+      _rng_int "$peak_lo" "$peak_hi" >/dev/null || return 1
+    elif [[ "$s" == "$dump_stat" ]]; then
+      _rng_int "$dump_lo" "$dump_hi" >/dev/null || return 1
+    else
+      _rng_int "$mid_lo" "$mid_hi" >/dev/null || return 1
+    fi
+    stat_values[$s]=$_RNG_RESULT
+  done
+
+  # Emit compact JSON in canonical stat order via a single jq invocation.
+  _RNG_ROLL="$(jq -n -c \
+    --argjson debugging "${stat_values[debugging]}" \
+    --argjson patience  "${stat_values[patience]}" \
+    --argjson chaos     "${stat_values[chaos]}" \
+    --argjson wisdom    "${stat_values[wisdom]}" \
+    --argjson snark     "${stat_values[snark]}" \
+    '{debugging:$debugging, patience:$patience, chaos:$chaos, wisdom:$wisdom, snark:$snark}'
+  )" || { _rng_log "roll_stats: jq assembly failed"; return 1; }
+  printf '%s' "$_RNG_ROLL"
 }
 
 roll_buddy() {
