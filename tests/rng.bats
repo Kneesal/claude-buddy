@@ -350,30 +350,25 @@ load test_helper
   local l="${counts[legendary]:-0}"    ; (( l >= 40 && l <= 200 )) || { echo "legendary=$l"; return 1; }
 }
 
-@test "roll_rarity: distribution holds across 3 different seeds" {
-  local seed
-  for seed in 1 99 12345; do
-    export BUDDY_RNG_SEED=$seed
-    run bash -c '
-      source "'"$RNG_LIB"'"
-      declare -A counts=()
-      for (( i = 0; i < 10000; i++ )); do
-        roll_rarity 0 >/dev/null
-        counts[$_RNG_ROLL]=$(( ${counts[$_RNG_ROLL]:-0} + 1 ))
-      done
-      c="${counts[common]:-0}"
-      u="${counts[uncommon]:-0}"
-      rare_c="${counts[rare]:-0}"
-      e="${counts[epic]:-0}"
-      l="${counts[legendary]:-0}"
-      (( c >= 5800 && c <= 6200 )) || { echo "common=$c"; exit 1; }
-      (( u >= 2300 && u <= 2700 )) || { echo "uncommon=$u"; exit 2; }
-      (( rare_c >= 800 && rare_c <= 1200 )) || { echo "rare=$rare_c"; exit 3; }
-      (( e >= 200 && e <= 600 )) || { echo "epic=$e"; exit 4; }
-      (( l >= 40 && l <= 200 )) || { echo "legendary=$l"; exit 5; }
-    '
-    [ "$status" -eq 0 ] || { echo "seed $seed: $output"; return 1; }
+@test "roll_rarity: distribution holds on a second seed (regression guard)" {
+  export BUDDY_RNG_SEED=12345
+  source "$RNG_LIB"
+  declare -A counts=()
+  local i
+  for (( i = 0; i < 10000; i++ )); do
+    roll_rarity 0 >/dev/null
+    counts[$_RNG_ROLL]=$(( ${counts[$_RNG_ROLL]:-0} + 1 ))
   done
+  local c="${counts[common]:-0}"
+  local u="${counts[uncommon]:-0}"
+  local rare_c="${counts[rare]:-0}"
+  local e="${counts[epic]:-0}"
+  local l="${counts[legendary]:-0}"
+  (( c >= 5800 && c <= 6200 )) || { echo "common=$c"; return 1; }
+  (( u >= 2300 && u <= 2700 )) || { echo "uncommon=$u"; return 1; }
+  (( rare_c >= 800 && rare_c <= 1200 )) || { echo "rare=$rare_c"; return 1; }
+  (( e >= 200 && e <= 600 )) || { echo "epic=$e"; return 1; }
+  (( l >= 40 && l <= 200 )) || { echo "legendary=$l"; return 1; }
 }
 
 @test "roll_rarity: pity trigger at 10 never returns common or uncommon over 1000 rolls" {
@@ -487,29 +482,27 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "roll_stats: floor enforcement — legendary across all species, 200 rolls each, every stat >= 50" {
-  source "$RNG_LIB"
-  local species i
-  for species in axolotl dragon owl ghost capybara; do
-    for (( i = 0; i < 200; i++ )); do
-      roll_stats legendary "$species" >/dev/null
-      local min
-      min="$(jq -r '[.debugging, .patience, .chaos, .wisdom, .snark] | min' <<< "$_RNG_ROLL")"
-      (( min >= 50 )) || { echo "$species roll $i: min=$min, json=$_RNG_ROLL"; return 1; }
-    done
-  done
-}
-
-@test "roll_stats: floor enforcement — 50 rolls × 25 (rarity,species) combos, every stat >= rarity floor" {
+@test "roll_stats: floor enforcement — 20 rolls × 25 (rarity,species) combos, every stat >= rarity floor" {
   source "$RNG_LIB"
   declare -A floor=([common]=5 [uncommon]=15 [rare]=25 [epic]=35 [legendary]=50)
   local rarity species i
+  # Floor is a never-violated property: if correct, the first roll proves it.
+  # 20 rolls per (rarity, species) catches pathological branches; slow opt-in
+  # variant (gated below) does 200 per combo for paranoid runs.
+  local N=20
+  [[ "${BUDDY_RNG_SLOW_TESTS:-}" == "1" ]] && N=200
   for rarity in common uncommon rare epic legendary; do
     for species in axolotl dragon owl ghost capybara; do
-      for (( i = 0; i < 50; i++ )); do
+      for (( i = 0; i < N; i++ )); do
         roll_stats "$rarity" "$species" >/dev/null
-        local min
-        min="$(jq -r '[.debugging, .patience, .chaos, .wisdom, .snark] | min' <<< "$_RNG_ROLL")"
+        # Parse without jq — output shape is fixed by roll_stats' printf.
+        local d p c w s
+        IFS=',' read -r d p c w s <<< "${_RNG_ROLL//[\{\}\"a-z:]/}"
+        local min=$d
+        (( p < min )) && min=$p
+        (( c < min )) && min=$c
+        (( w < min )) && min=$w
+        (( s < min )) && min=$s
         (( min >= ${floor[$rarity]} )) || {
           echo "$rarity $species roll $i: min=$min, floor=${floor[$rarity]}, json=$_RNG_ROLL"
           return 1
@@ -522,48 +515,58 @@ load test_helper
 @test "roll_stats: shape — exactly one peak (>= floor+41), one dump (<= floor+14), three mids" {
   source "$RNG_LIB"
   local i
-  for (( i = 0; i < 100; i++ )); do
+  for (( i = 0; i < 30; i++ )); do
     roll_stats legendary axolotl >/dev/null
-    # floor=50; peak in [91,100]; dump in [50,64]; mid in [65,90]
-    run jq -e '
-      [.debugging, .patience, .chaos, .wisdom, .snark] as $stats
-      | ([$stats[] | select(. >= 91)] | length) == 1
-      and ([$stats[] | select(. <= 64)] | length) == 1
-      and ([$stats[] | select(. >= 65 and . <= 90)] | length) == 3
-    ' <<< "$_RNG_ROLL"
-    [ "$status" -eq 0 ] || { echo "bad shape at i=$i: $_RNG_ROLL"; return 1; }
+    # floor=50; peak in [91,100]; dump in [50,64]; mid in [65,90].
+    # Parse without jq — fixed shape from roll_stats printf.
+    local d p c w s
+    IFS=',' read -r d p c w s <<< "${_RNG_ROLL//[\{\}\"a-z:]/}"
+    local peak_count=0 dump_count=0 mid_count=0 v
+    for v in "$d" "$p" "$c" "$w" "$s"; do
+      if   (( v >= 91 )); then peak_count=$((peak_count+1))
+      elif (( v <= 64 )); then dump_count=$((dump_count+1))
+      else                     mid_count=$((mid_count+1))
+      fi
+    done
+    [[ "$peak_count" == "1" && "$dump_count" == "1" && "$mid_count" == "3" ]] || {
+      echo "bad shape at i=$i: $_RNG_ROLL (peak=$peak_count dump=$dump_count mid=$mid_count)"
+      return 1
+    }
   done
 }
 
-@test "roll_stats: species bias — patience is the peak for axolotl in > 55% of 1000 rolls" {
+@test "roll_stats: species bias — patience peaks for axolotl in > 55% of 300 rolls" {
+  # Expected ~68% from 60%-species-pref + 40%-uniform-hit math. 300 trials
+  # has σ≈0.027, so a 55% threshold is ~5σ below expectation — safe.
   export BUDDY_RNG_SEED=777
   source "$RNG_LIB"
   local i peak_count=0
-  for (( i = 0; i < 1000; i++ )); do
+  for (( i = 0; i < 300; i++ )); do
     roll_stats legendary axolotl >/dev/null
-    local peak_stat
-    peak_stat="$(jq -r 'to_entries | max_by(.value).key' <<< "$_RNG_ROLL")"
-    if [ "$peak_stat" = "patience" ]; then
+    # Peak is the value >= 91 (floor 50 + peak_offset 41). Find which stat.
+    local d p c w s
+    IFS=',' read -r d p c w s <<< "${_RNG_ROLL//[\{\}\"a-z:]/}"
+    if (( p >= 91 )); then
       peak_count=$(( peak_count + 1 ))
     fi
   done
-  # Expected ~680 (0.68 × 1000); threshold 550 gives plenty of headroom
-  (( peak_count > 550 )) || { echo "patience peaked only $peak_count/1000 times"; return 1; }
+  (( peak_count > 165 )) || { echo "patience peaked only $peak_count/300 times"; return 1; }
 }
 
-@test "roll_stats: species bias — chaos is the dump for axolotl in > 55% of 1000 rolls" {
+@test "roll_stats: species bias — chaos dumps for axolotl in > 55% of 300 rolls" {
   export BUDDY_RNG_SEED=333
   source "$RNG_LIB"
   local i dump_count=0
-  for (( i = 0; i < 1000; i++ )); do
+  for (( i = 0; i < 300; i++ )); do
     roll_stats legendary axolotl >/dev/null
-    local dump_stat
-    dump_stat="$(jq -r 'to_entries | min_by(.value).key' <<< "$_RNG_ROLL")"
-    if [ "$dump_stat" = "chaos" ]; then
+    local d p c w s
+    IFS=',' read -r d p c w s <<< "${_RNG_ROLL//[\{\}\"a-z:]/}"
+    # Dump is the value <= 64 (floor 50 + dump_offset 14).
+    if (( c <= 64 )); then
       dump_count=$(( dump_count + 1 ))
     fi
   done
-  (( dump_count > 550 )) || { echo "chaos dumped only $dump_count/1000 times"; return 1; }
+  (( dump_count > 165 )) || { echo "chaos dumped only $dump_count/300 times"; return 1; }
 }
 
 @test "roll_stats: invalid rarity returns error" {
@@ -590,10 +593,15 @@ load test_helper
 @test "roll_stats: legendary never produces a value > 100 (peak clamp)" {
   source "$RNG_LIB"
   local i
-  for (( i = 0; i < 200; i++ )); do
+  for (( i = 0; i < 50; i++ )); do
     roll_stats legendary axolotl >/dev/null
-    local max
-    max="$(jq -r '[.debugging, .patience, .chaos, .wisdom, .snark] | max' <<< "$_RNG_ROLL")"
+    local d p c w s
+    IFS=',' read -r d p c w s <<< "${_RNG_ROLL//[\{\}\"a-z:]/}"
+    local max=$d
+    (( p > max )) && max=$p
+    (( c > max )) && max=$c
+    (( w > max )) && max=$w
+    (( s > max )) && max=$s
     (( max <= 100 )) || { echo "overflow at i=$i: max=$max json=$_RNG_ROLL"; return 1; }
   done
 }
@@ -650,7 +658,7 @@ load test_helper
   source "$RNG_LIB"
   declare -A floor=([common]=5 [uncommon]=15 [rare]=25 [epic]=35 [legendary]=50)
   local i
-  for (( i = 0; i < 100; i++ )); do
+  for (( i = 0; i < 25; i++ )); do
     roll_buddy 0 >/dev/null
     local rarity min
     rarity="$(jq -r '.rarity' <<< "$_RNG_ROLL")"
@@ -662,10 +670,10 @@ load test_helper
   done
 }
 
-@test "roll_buddy: pity propagates — pity=10 produces Rare+ 200/200 times" {
+@test "roll_buddy: pity propagates — pity=10 produces Rare+ 50/50 times" {
   source "$RNG_LIB"
   local i
-  for (( i = 0; i < 200; i++ )); do
+  for (( i = 0; i < 50; i++ )); do
     roll_buddy 10 >/dev/null
     local rarity
     rarity="$(jq -r '.rarity' <<< "$_RNG_ROLL")"

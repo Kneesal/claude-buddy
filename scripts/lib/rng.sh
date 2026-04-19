@@ -91,6 +91,12 @@ if [[ "${_RNG_SH_LOADED:-}" != "1" ]]; then
   # rng.sh invocation — species files don't change mid-process.
   declare -gA _RNG_SPECIES_CACHE=()
 
+  # Per-process peak-prefer / dump-prefer caches. Each roll_stats call previously
+  # spawned 2 extra jq processes to extract these from the JSON; with a cache
+  # that cost is paid once per species per process.
+  declare -gA _RNG_SPECIES_PEAK=()
+  declare -gA _RNG_SPECIES_DUMP=()
+
   # Per-process flags
   _RNG_SEEDED=0
   _RNG_JQ_MISSING=0
@@ -364,25 +370,34 @@ next_pity_counter() {
   esac
 }
 
-# Internal: extract the peak-prefer stat name from a species JSON blob.
-# Echoes to stdout. Sets _RNG_STAT_PEAK.
-_rng_species_peak() {
-  local json="$1"
-  _RNG_STAT_PEAK="$(printf '%s' "$json" | jq -r '
-    .base_stats_weights | to_entries | map(select(.value == "peak-prefer"))[0].key
+# Internal: load and cache the peak-prefer / dump-prefer stat names for a
+# species. One jq invocation per species per process — not per roll. Sets
+# _RNG_STAT_PEAK and _RNG_STAT_DUMP globals (no stdout).
+_rng_load_species_weights() {
+  local species="$1"
+  if [[ -n "${_RNG_SPECIES_PEAK[$species]:-}" ]]; then
+    _RNG_STAT_PEAK="${_RNG_SPECIES_PEAK[$species]}"
+    _RNG_STAT_DUMP="${_RNG_SPECIES_DUMP[$species]}"
+    return 0
+  fi
+  local json
+  json="$(_rng_load_species "$species")" || return 1
+  # Single jq invocation extracts both fields as "peak\tdump".
+  local both
+  both="$(printf '%s' "$json" | jq -r '
+    (.base_stats_weights | to_entries | map(select(.value == "peak-prefer"))[0].key) + "\t" +
+    (.base_stats_weights | to_entries | map(select(.value == "dump-prefer"))[0].key)
   ')"
-  [[ -n "$_RNG_STAT_PEAK" && "$_RNG_STAT_PEAK" != "null" ]] || return 1
-  printf '%s' "$_RNG_STAT_PEAK"
-}
-
-# Internal: extract the dump-prefer stat name from a species JSON blob.
-_rng_species_dump() {
-  local json="$1"
-  _RNG_STAT_DUMP="$(printf '%s' "$json" | jq -r '
-    .base_stats_weights | to_entries | map(select(.value == "dump-prefer"))[0].key
-  ')"
-  [[ -n "$_RNG_STAT_DUMP" && "$_RNG_STAT_DUMP" != "null" ]] || return 1
-  printf '%s' "$_RNG_STAT_DUMP"
+  local peak="${both%$'\t'*}"
+  local dump="${both#*$'\t'}"
+  if [[ -z "$peak" || -z "$dump" || "$peak" == "null" || "$dump" == "null" ]]; then
+    _rng_log "_rng_load_species_weights: $species missing peak-prefer or dump-prefer"
+    return 1
+  fi
+  _RNG_SPECIES_PEAK[$species]="$peak"
+  _RNG_SPECIES_DUMP[$species]="$dump"
+  _RNG_STAT_PEAK="$peak"
+  _RNG_STAT_DUMP="$dump"
 }
 
 # Public: generate a 5-stat object with rarity floor + one-peak/one-dump/
@@ -402,18 +417,9 @@ roll_stats() {
     return 1
   fi
 
-  local json
-  json="$(_rng_load_species "$species")" || return 1
-
-  local peak_pref dump_pref
-  peak_pref="$(_rng_species_peak "$json")" || {
-    _rng_log "roll_stats: $species has no peak-prefer stat"
-    return 1
-  }
-  dump_pref="$(_rng_species_dump "$json")" || {
-    _rng_log "roll_stats: $species has no dump-prefer stat"
-    return 1
-  }
+  _rng_load_species_weights "$species" || return 1
+  local peak_pref="$_RNG_STAT_PEAK"
+  local dump_pref="$_RNG_STAT_DUMP"
   if [[ "$peak_pref" == "$dump_pref" ]]; then
     _rng_log "roll_stats: $species has peak-prefer == dump-prefer ($peak_pref); species data is malformed"
     return 1
@@ -484,15 +490,12 @@ roll_stats() {
     stat_values[$s]=$_RNG_RESULT
   done
 
-  # Emit compact JSON in canonical stat order via a single jq invocation.
-  _RNG_ROLL="$(jq -n -c \
-    --argjson debugging "${stat_values[debugging]}" \
-    --argjson patience  "${stat_values[patience]}" \
-    --argjson chaos     "${stat_values[chaos]}" \
-    --argjson wisdom    "${stat_values[wisdom]}" \
-    --argjson snark     "${stat_values[snark]}" \
-    '{debugging:$debugging, patience:$patience, chaos:$chaos, wisdom:$wisdom, snark:$snark}'
-  )" || { _rng_log "roll_stats: jq assembly failed"; return 1; }
+  # Emit compact JSON in canonical stat order. Values are validated integers,
+  # so direct printf is safe and avoids a per-call jq process spawn (the
+  # hottest path — tests loop thousands of times through roll_stats).
+  printf -v _RNG_ROLL '{"debugging":%d,"patience":%d,"chaos":%d,"wisdom":%d,"snark":%d}' \
+    "${stat_values[debugging]}" "${stat_values[patience]}" "${stat_values[chaos]}" \
+    "${stat_values[wisdom]}" "${stat_values[snark]}"
   printf '%s' "$_RNG_ROLL"
 }
 
