@@ -2,7 +2,7 @@
 
 A Claude Code plugin that extends the built-in `/buddy` with gacha hatching and Tamagotchi-style evolution. Your buddy rolls randomly on hatch — species, rarity, stats, personality — and grows over time based on how you code.
 
-> **Status:** P1-3 landed — `/buddy:hatch`, `/buddy:stats`, and `/buddy:reset` are wired end-to-end over the four-state machine (NO_BUDDY / ACTIVE / CORRUPT / FUTURE_VERSION). Status line rendering, evolution, and commentary are coming in future releases.
+> **Status:** P2 landed — status line shipped (see the Status line section below), plus the P1-3 slash command state machine (`/buddy:hatch`, `/buddy:stats`, `/buddy:reset`). Evolution and commentary are coming in future releases.
 
 ## Requirements
 
@@ -44,11 +44,55 @@ Destructive operations (reroll, reset) require an explicit `--confirm` flag beca
 
 If you haven't hatched a buddy yet, `/buddy:interact`, `/buddy:stats`, and `/buddy:reset` will print a short pointer to `/buddy:hatch`.
 
+## Status line
+
+Enable the ambient status line to see your buddy on every assistant turn:
+
+```
+🦎 Custard (Common axolotl · Lv.1) · 4 🪙
+```
+
+The plugin's status line is opt-in because plugin-level `settings.json` cannot register a `statusLine` (only `agent` and `subagentStatusLine` are supported at that level — see [`docs/solutions/developer-experience/claude-code-plugin-scaffolding-gotchas-2026-04-16.md`](docs/solutions/developer-experience/claude-code-plugin-scaffolding-gotchas-2026-04-16.md)). Enable it by adding the snippet below to your **user-level** `settings.json`:
+
+- Global (all projects): `~/.claude/settings.json`
+- Per-project: `.claude/settings.json` in the project root
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "${CLAUDE_PLUGIN_ROOT}/statusline/buddy-line.sh",
+    "padding": 1,
+    "refreshInterval": 5
+  }
+}
+```
+
+Restart Claude Code (or open a new session) and the buddy appears in the bottom status bar.
+
+**What renders:**
+
+| State | Status line |
+|---|---|
+| NO_BUDDY (fresh install / post-reset) | `🥚 No buddy — /buddy:hatch` |
+| ACTIVE (width ≥ 40) | `<emoji> <name> (<Rarity> <species> · Lv.<N>) · <N> 🪙` |
+| ACTIVE (width 30–39) | Tokens segment dropped |
+| ACTIVE (width < 30) | Rarity qualifier also dropped: `<emoji> <name> (Lv.<N>)` |
+| CORRUPT | `⚠️ buddy state needs /buddy:reset` |
+| FUTURE_VERSION (newer plugin wrote the file) | `⚠️ update plugin to read newer buddy.json` |
+
+**Customization:**
+
+- Set `NO_COLOR=1` in your environment to strip ANSI color codes (the rarity qualifier renders plain).
+- Rarity color map: Common = grey, Uncommon = white, Rare = blue, Epic = magenta, Legendary = gold.
+- Shiny buddies (P7-2) will get a ✨ sparkle prefix here as a lightweight visual tell; the full rainbow portrait lives in chat output, not the status line.
+
 ## Libraries
 
 - **`scripts/lib/state.sh`** (P1-1) — atomic, flock-locked JSON persistence for `buddy.json` and per-session `session-<id>.json` with schema versioning and corruption sentinels. Tests: `tests/state.bats`.
 - **`scripts/lib/rng.sh`** (P1-2) — hatch roller: `roll_rarity` (60/25/10/4/1 with pseudo-pity rescue at 10), `roll_species`, `roll_stats` (rarity floors + one-peak/one-dump/three-mid shape with species bias), `roll_name`, `roll_buddy` (the full composed inner-buddy JSON), `next_pity_counter`. Deterministic via `BUDDY_RNG_SEED` for tests. Tests: `tests/rng.bats`.
-- **`scripts/species/*.json`** (P1-2) — per-species data (voice archetype, stat weights, name pool). 5 launch species; 18 at P7-1.
+- **`scripts/species/*.json`** (P1-2, extended P2) — per-species data (voice archetype, stat weights, name pool, emoji). 5 launch species; 18 at P7-1.
+- **`statusline/buddy-line.sh`** (P2) — single-line ambient renderer for the status bar. Reads `buddy.json`, prints one line per state, width-safe, honors `NO_COLOR`. Tests: `tests/statusline.bats`.
 
 ## Implementation language
 

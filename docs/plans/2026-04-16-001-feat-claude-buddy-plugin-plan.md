@@ -79,7 +79,7 @@ claude-buddy/                          # dev dir (repo name)
 │       ├── owl.json
 │       ├── ghost.json
 │       └── capybara.json
-├── settings.json                      # statusLine config
+├── settings.json                      # plugin-level config (agent, subagentStatusLine only — NOT statusLine, which is user-level)
 ├── README.md
 └── docs/
     ├── brainstorms/
@@ -265,8 +265,8 @@ Each phase is a ticket-sized unit of work with explicit entry and exit criteria.
   - `NO_BUDDY` → `🥚 No buddy — /buddy hatch`
   - `ACTIVE` → `🦎 Pip (Rare Axolotl · Lv.3) · 4 🪙`
   - `CORRUPT` → `⚠️ buddy state needs /buddy reset`
-- [ ] Plugin's `settings.json` registers `statusLine.type: "command"` with `refreshInterval: 5`, padding 1.
-- [ ] ANSI color per rarity (grey Common → gold Legendary); shiny flag swaps to rainbow once shiny exists (P7).
+- [ ] Status line is registered via the **user's** `settings.json` (`~/.claude/settings.json` or project-level `.claude/settings.json`) — plugin-level `settings.json` only supports `agent` and `subagentStatusLine`. README documents the opt-in snippet pointing at `${CLAUDE_PLUGIN_ROOT}/statusline/buddy-line.sh` with `refreshInterval: 5`, padding 1.
+- [ ] ANSI color per rarity (grey Common → gold Legendary); shiny flag is read now for a stub code path, rainbow rendering lights up in P7-2 in chat-output portraits (status line keeps a subtle sparkle emoji for shinies).
 - [ ] Gracefully handle missing `${CLAUDE_PLUGIN_DATA}` — treat as NO_BUDDY.
 - [ ] Width-safe: if status line width < 40 cols, drop the speech-bubble segment.
 
@@ -349,14 +349,28 @@ Each phase is a ticket-sized unit of work with explicit entry and exit criteria.
 - [ ] Expand `scripts/species/` to 18 species matching `/buddy`'s roster (per [findskill.ai](https://findskill.ai/blog/claude-code-buddy-guide/)): Duck, Goose, Cat, Rabbit, Owl, Penguin, Turtle, Snail, Dragon, Octopus, Axolotl, Ghost, Robot, Blob, Cactus, Mushroom, Chonk, Capybara.
 - [ ] Each new species: archetype voice, evolution paths, ≥50 canned lines per event bank.
 
-**P7.2 — Full ASCII sprites** *(ticket)*
+**P7.2 — ASCII portraits in chat output** *(ticket)*
 
-- [ ] 5-line × 12-char × 3-frame ASCII sprite per species per form (matching `/buddy`'s proven format per [claudefa.st](https://claudefa.st/blog/guide/mechanics/claude-buddy)).
-- [ ] Status line switches to multi-line rendering when terminal supports it (>= 5 lines of `statusLine` output).
-- [ ] Shiny variants: ~1/256 post-rarity-roll; rainbow ANSI frame in status line.
-- [ ] `refreshInterval: 1` for animation cadence, with graceful fallback for narrow terminals.
+> **Re-scoped 2026-04-20.** Originally planned as a status-line animation (5-line × 12-char × 3-frame loop with `refreshInterval: 1`). Replaced with one-shot portraits rendered via slash-command chat output. Rationale in the Design Amendment block below.
 
-**Exit criteria**: full 18 species hatchable; status line animates; shinies are real rare treats.
+- [ ] 5-line × 12-char static ASCII portrait per species per form (matching `/buddy`'s proven single-frame format per [claudefa.st](https://claudefa.st/blog/guide/mechanics/claude-buddy)). No animation frames — each portrait is a single frame, rendered once per invocation.
+- [ ] Portrait renderer lives in a new `scripts/lib/portrait.sh`, sourced by `scripts/hatch.sh` and `scripts/status.sh` to render the buddy at the top of each command's chat output. Markdown code-fenced block for mono-width preservation; ANSI color applied per-rarity outside the fence for rarity framing.
+- [ ] Shiny variants: ~1/256 post-rarity-roll; rainbow ANSI treatment on the portrait block in chat output. A subtle sparkle emoji also appears in the status line as the lightweight "I'm a shiny" tell.
+- [ ] Portrait sizes scale gracefully: full 5-line portrait in slash-command output; status line stays the one-line format from P2. No `refreshInterval` change.
+
+**Exit criteria**: full 18 species hatchable; `/buddy:stats`, `/buddy:hatch` success, and evolution ceremonies render the buddy's portrait inline in chat; shinies are real rare treats (rainbow portrait + status-line sparkle).
+
+### Design amendment (2026-04-20)
+
+P7-2 originally targeted the Claude Code status line as the ASCII-art surface with a 3-frame animation loop running every second (`refreshInterval: 1`). That approach has three structural problems:
+
+1. **The status line is vertical real estate the terminal is stingy with.** Multi-line `statusLine` is possible but takes permanent screen space from the chat area. Users with short terminals pay a cost every turn.
+2. **Animation via `refreshInterval: 1` is a poll loop.** Every frame re-runs the shell script, re-reads `buddy.json`, re-renders. Even under the <100ms hook budget, that's a constant background cost competing with the user's actual work.
+3. **Slash-command chat output is unbounded and zero-recurring-cost.** A 5-line portrait in `/buddy:stats` output renders once, stays in transcript scrollback, and costs nothing between invocations. The user sees the buddy exactly when they asked to see it.
+
+The amendment: **ASCII portraits render in slash-command chat output, not the status line.** The status line stays the one-line ambient P2 format (emoji + name + level + tokens). The portrait shows up when the user runs `/buddy:hatch` (celebrating a new buddy), `/buddy:stats` (checking on their current buddy), and on evolution ceremonies (form transitions, one-shot). Hook-driven commentary (P3) stays prose-only in the transcript; it does not carry portraits.
+
+This also maps better to where users already look for richer buddy info: they ran a command, they get a full picture. Ambient presence and on-demand portraits become different surfaces serving different purposes, rather than fighting for the same status-line pixels.
 
 ---
 
@@ -439,7 +453,8 @@ The plugin primitives this plugin touches:
 |---|---|---|
 | `skills/<name>/SKILL.md` (slash command) | P0–P1 onward | Free-text args (`/buddy hatch --confirm`) interpreted by SKILL.md instructions per [skills docs](https://code.claude.com/docs/en/skills). |
 | `hooks/hooks.json` (event hooks) | P3 onward | `PostToolUse`, `PostToolUseFailure`, `Stop`, `SessionStart`. No `PreToolUse` (we don't want to gate any tool). |
-| `settings.json` → `statusLine` (status line) | P2 onward | `type: "command"`, `refreshInterval: 5` initially, dropping to 1 in P7 for animation. |
+| User-level `settings.json` → `statusLine` (status line) | P2 onward | `type: "command"`, `refreshInterval: 5`. Registered in the **user's** `settings.json` (`~/.claude/` or `.claude/`), not the plugin's — plugin-level `settings.json` only supports `agent` and `subagentStatusLine`. README documents the opt-in snippet. Refresh interval stays at 5 permanently (see P7-2 re-scope — animation moved to chat output). |
+| Slash-command chat output (ASCII portraits) | P7-2 onward | Added surface per the 2026-04-20 amendment — `/buddy:hatch` success, `/buddy:stats`, and evolution ceremonies render a 5-line ASCII portrait inline in the transcript. Status line stays single-line ambient. |
 | `${CLAUDE_PLUGIN_DATA}` (persistent state) | P1 onward | Survives updates; documented contract. |
 | `userConfig` (manifest) | P3 onward | Expose `commentsPerSession`, `rerollCost`, later tokens-per-hour. |
 | `bin/` (PATH extension) | Not used | No need for externally-invokable tools. |
@@ -553,7 +568,7 @@ Explicitly out of scope for this plan (deferred to future brainstorms, per origi
 | R8 — reroll token rate? | P5 — 1/hour capped 3/day; reroll cost 10. All tunable via userConfig. |
 | R1, R7 — initial species roster? | P1.2 — 5 species at launch (Axolotl/Dragon/Owl/Ghost/Capybara), scales to 18 in P7.1. |
 | R2 — storage format & location? | Data Model section — `${CLAUDE_PLUGIN_DATA}/buddy.json` + `session.json`. |
-| R3 — status line constraints? | P2 — refreshInterval 5 in P2, drops to 1 in P7; width-safe to 40 cols. |
+| R3 — status line constraints? | P2 — refreshInterval 5; width-safe to 40 cols; user-level `settings.json` opt-in. ASCII portraits render in chat output via P7-2 (amended 2026-04-20), not in the status line. |
 | Naming collision | Resolved — plugin `buddy`, skill `/buddy` (fallback `/buddy:buddy`). See "Naming Decision" above. |
 
 ### New questions surfaced during planning

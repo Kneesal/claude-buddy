@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "species": "capybara",
+  "emoji": "🐹",
   "voice": "chill-zen",
   "base_stats_weights": {
     "debugging": "dump-prefer",

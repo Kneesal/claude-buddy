@@ -12,7 +12,7 @@ Each ticket is a self-contained markdown file with frontmatter (`id`, `phase`, `
 | [P1-1](./P1-1-state-primitives.md) | State primitives (atomic I/O, flock, schema) | `done` | P0 |
 | [P1-2](./P1-2-hatch-roller.md) | Hatch roller (rarity, stats, species) | `done` | P1-1 |
 | [P1-3](./P1-3-slash-commands.md) | Slash command state machine | `done` | P1-1, P1-2 |
-| [P2](./P2-status-line.md) | Status line rendering | `todo` | P1-1 |
+| [P2](./P2-status-line.md) | Status line rendering | `done` | P1-1 |
 | [P3-1](./P3-1-hook-wiring.md) | Hook wiring + session init | `todo` | P1-1, P1-3 |
 | [P3-2](./P3-2-commentary-engine.md) | Commentary engine (canned v1) | `todo` | P3-1 |
 | [P4-1](./P4-1-xp-signals.md) | XP + evolution signal accumulation | `todo` | P3-1 |
@@ -20,7 +20,7 @@ Each ticket is a self-contained markdown file with frontmatter (`id`, `phase`, `
 | [P5](./P5-reroll-tokens.md) | Reroll token economy | `todo` | P4-2 |
 | [P6](./P6-llm-commentary.md) | LLM-generated contextual commentary | `todo` | P3-2 |
 | [P7-1](./P7-1-full-roster.md) | Scale roster to 18 species | `todo` | P4-2 |
-| [P7-2](./P7-2-full-sprites.md) | 5-line animated sprites + shinies | `todo` | P2, P7-1 |
+| [P7-2](./P7-2-full-sprites.md) | ASCII portraits in chat output + shinies | `todo` | P1-3, P2, P7-1 |
 | [P8](./P8-polish.md) | Polish, docs, `/buddy stats`, publication | `todo` | P7-2, P5 |
 
 ## Playable milestones

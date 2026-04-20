@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "species": "owl",
+  "emoji": "🦉",
   "voice": "dry-scholar",
   "base_stats_weights": {
     "debugging": "neutral",
