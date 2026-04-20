@@ -2,7 +2,7 @@
 id: P3-2
 title: Commentary engine (canned v1)
 phase: P3
-status: todo
+status: in-progress
 depends_on: [P3-1]
 origin_plan: docs/plans/2026-04-16-001-feat-claude-buddy-plugin-plan.md
 ---

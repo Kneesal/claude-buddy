@@ -1,5 +1,17 @@
 {
   "name": "buddy",
   "version": "0.1.0",
-  "description": "Gacha-hatched, Tamagotchi-style evolving coding companion for Claude Code"
+  "description": "Gacha-hatched, Tamagotchi-style evolving coding companion for Claude Code",
+  "userConfig": {
+    "commentsPerSession": {
+      "type": "integer",
+      "default": 8,
+      "description": "Maximum number of hook-driven commentary lines buddy emits per Claude Code session. Does not include the session-end goodbye."
+    },
+    "stopLineOnExit": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether buddy emits a one-line goodbye when a Claude Code session ends. The goodbye bypasses the per-session comment cap."
+    }
+  }
 }
