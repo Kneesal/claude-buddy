@@ -26,3 +26,7 @@ This command takes no arguments — ignore any extra tokens in the user's messag
 Relay the script's stdout back to the user **verbatim**, as the buddy's voice. Don't rephrase, explain, or add commentary.
 
 If the script exits non-zero, also surface its stderr so the user can see what broke.
+
+## Debugging silent hook failures
+
+Hooks (P3+) log internal failures to `${CLAUDE_PLUGIN_DATA}/error.log` — tab-separated lines of `ISO-timestamp\thook-name\treason`. If the user asks why the buddy isn't reacting or evolving, that file is the first place to look. Hooks intentionally never surface stderr to the Claude transcript; silence in the chat does not mean silence in the log.

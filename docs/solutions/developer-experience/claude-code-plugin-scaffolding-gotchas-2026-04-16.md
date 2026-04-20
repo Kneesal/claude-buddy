@@ -150,6 +150,7 @@ claude --plugin-dir .
 
 ## Related
 
+- [claude-code-plugin-hooks-json-schema-2026-04-20.md](./claude-code-plugin-hooks-json-schema-2026-04-20.md) — fifth peer gotcha in the "non-obvious Claude Code plugin platform behaviors" family: `hooks/hooks.json` requires nested `hooks:` entries, not the flat shape some docs show. Same "looks right, silently wrong" trap pattern as the items in this doc.
 - [P0 scaffolding ticket](../roadmap/P0-scaffolding.md) — source findings in the Notes section
 - [P0 implementation plan](../plans/2026-04-16-002-feat-p0-plugin-scaffolding-plan.md) — pre-discovery framing of namespace and reload questions
 - [Full plugin plan](../plans/2026-04-16-001-feat-claude-buddy-plugin-plan.md) — architectural context (Naming Decision, API Surface Parity)
