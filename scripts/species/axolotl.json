@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "species": "axolotl",
+  "emoji": "🦎",
   "voice": "wholesome-cheerleader",
   "base_stats_weights": {
     "debugging": "neutral",

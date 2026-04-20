@@ -4,39 +4,8 @@ bats_require_minimum_version 1.5.0
 
 load test_helper
 
-# Scripts under test
-HATCH_SH="$REPO_ROOT/scripts/hatch.sh"
-STATUS_SH="$REPO_ROOT/scripts/status.sh"
-RESET_SH="$REPO_ROOT/scripts/reset.sh"
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-# Seed a deterministic first hatch so later assertions can pin species/rarity.
-_seed_hatch() {
-  local seed="${1:-42}"
-  BUDDY_RNG_SEED="$seed" bash "$HATCH_SH" >/dev/null
-}
-
-# Inject tokens directly into an existing envelope. Used to exercise the
-# reroll-paid path while P5 isn't built yet.
-_inject_tokens() {
-  local n="$1"
-  local buddy_file="$CLAUDE_PLUGIN_DATA/buddy.json"
-  local tmp
-  tmp="$(mktemp "$CLAUDE_PLUGIN_DATA/.inject.XXXXXX")"
-  jq --argjson v "$n" '.tokens.balance = $v' "$buddy_file" > "$tmp"
-  mv -f "$tmp" "$buddy_file"
-}
-
-_seed_corrupt() {
-  echo '{"schema' > "$CLAUDE_PLUGIN_DATA/buddy.json"
-}
-
-_seed_future_version() {
-  echo '{"schemaVersion": 999, "buddy": {}}' > "$CLAUDE_PLUGIN_DATA/buddy.json"
-}
+# Script paths and shared seeding helpers (_seed_hatch, _seed_corrupt,
+# _seed_future_version, _inject_tokens) come from test_helper.bash.
 
 # ============================================================
 # hatch.sh — NO_BUDDY (first hatch)
@@ -338,6 +307,48 @@ JSON
 @test "status: extra args are rejected" {
   run --separate-stderr bash "$STATUS_SH" bogus
   [ "$status" -ne 0 ]
+}
+
+@test "status: envelope with null .buddy falls through to repair pointer (not garbled)" {
+  # schemaVersion=1 is valid so buddy_load returns JSON (not the CORRUPT
+  # sentinel), but .buddy is null. Without the upstream validity guard, the
+  # @tsv + IFS=$'\t' read path in _status_render_active would collapse the
+  # leading empty fields and print a scrambled line. With the guard, this
+  # routes to the repair message identical to the CORRUPT sentinel path.
+  echo '{"schemaVersion": 1, "buddy": null, "tokens": {"balance": 0}, "meta": {"totalHatches": 1, "pityCounter": 0}}' \
+    > "$CLAUDE_PLUGIN_DATA/buddy.json"
+  run --separate-stderr bash "$STATUS_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Buddy state needs repair"* ]]
+  [[ "$output" != *"Lv."* ]]
+}
+
+@test "status: envelope with empty .buddy object falls through to repair pointer" {
+  # Same hazard as above with a different shape — empty object instead of null.
+  echo '{"schemaVersion": 1, "buddy": {}, "tokens": {"balance": 0}, "meta": {"totalHatches": 1, "pityCounter": 0}}' \
+    > "$CLAUDE_PLUGIN_DATA/buddy.json"
+  run --separate-stderr bash "$STATUS_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Buddy state needs repair"* ]]
+}
+
+@test "status: envelope with .buddy as a string falls through to repair pointer" {
+  # The shape validator uses `(.buddy | type) != "object"`. Pin that it rejects
+  # non-object types beyond null and empty-object — a string here is the same
+  # class of malformation and must route to repair, not crash.
+  echo '{"schemaVersion": 1, "buddy": "broken", "tokens": {"balance": 0}, "meta": {"totalHatches": 1, "pityCounter": 0}}' \
+    > "$CLAUDE_PLUGIN_DATA/buddy.json"
+  run --separate-stderr bash "$STATUS_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Buddy state needs repair"* ]]
+}
+
+@test "status: envelope with .buddy as an array falls through to repair pointer" {
+  echo '{"schemaVersion": 1, "buddy": [], "tokens": {"balance": 0}, "meta": {"totalHatches": 1, "pityCounter": 0}}' \
+    > "$CLAUDE_PLUGIN_DATA/buddy.json"
+  run --separate-stderr bash "$STATUS_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Buddy state needs repair"* ]]
 }
 
 # ============================================================

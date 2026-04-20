@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "species": "dragon",
+  "emoji": "🐉",
   "voice": "chaotic-gremlin",
   "base_stats_weights": {
     "debugging": "neutral",

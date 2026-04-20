@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "species": "ghost",
+  "emoji": "👻",
   "voice": "deadpan-night",
   "base_stats_weights": {
     "debugging": "dump-prefer",
