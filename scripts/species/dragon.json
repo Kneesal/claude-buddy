@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "species": "dragon",
+  "voice": "chaotic-gremlin",
+  "base_stats_weights": {
+    "debugging": "neutral",
+    "patience": "dump-prefer",
+    "chaos": "peak-prefer",
+    "wisdom": "neutral",
+    "snark": "neutral"
+  },
+  "name_pool": [
+    "Vex", "Rune", "Smog", "Grit", "Fang",
+    "Scorch", "Ember", "Cinder", "Ruin", "Hex",
+    "Zap", "Kraken", "Drizzt", "Onyx", "Nyx",
+    "Blight", "Shiv", "Bane", "Wyrm", "Charcoal",
+    "Venom", "Scale"
+  ],
+  "evolution_paths": {},
+  "line_banks": {},
+  "sprite": null
+}

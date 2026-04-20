@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "species": "ghost",
+  "voice": "deadpan-night",
+  "base_stats_weights": {
+    "debugging": "dump-prefer",
+    "patience": "neutral",
+    "chaos": "neutral",
+    "wisdom": "neutral",
+    "snark": "peak-prefer"
+  },
+  "name_pool": [
+    "Moth", "Hush", "Wisp", "Vapor", "Shade",
+    "Cobweb", "Drift", "Echo", "Gloom", "Hollow",
+    "Mire", "Murk", "Null", "Pall", "Quiet",
+    "Sable", "Tarry", "Umbra", "Veil", "Wraith",
+    "Dusk", "Eerie"
+  ],
+  "evolution_paths": {},
+  "line_banks": {},
+  "sprite": null
+}
