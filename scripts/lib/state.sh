@@ -423,5 +423,11 @@ state_cleanup_orphans() {
   # Remove stale session files
   find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin "+$ORPHAN_MAX_AGE_MINUTES" -delete 2>/dev/null || true
 
+  # Remove any orphaned buddy.json.deleted marker left behind by a reset that
+  # was killed between the rename and the unlink. The file is transient by
+  # construction — it should never coexist with a normal reset.sh run — so
+  # removing it unconditionally is safe. See scripts/reset.sh for the dance.
+  rm -f "$data_dir/buddy.json.deleted" 2>/dev/null || true
+
   return 0
 }

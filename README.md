@@ -2,7 +2,7 @@
 
 A Claude Code plugin that extends the built-in `/buddy` with gacha hatching and Tamagotchi-style evolution. Your buddy rolls randomly on hatch — species, rarity, stats, personality — and grows over time based on how you code.
 
-> **Status:** P0 scaffolding — plugin installs and slash commands respond. P1-1 state primitives and P1-2 hatch roller landed. `/buddy:hatch` wiring, evolution, and commentary are coming in future releases.
+> **Status:** P1-3 landed — `/buddy:hatch`, `/buddy:stats`, and `/buddy:reset` are wired end-to-end over the four-state machine (NO_BUDDY / ACTIVE / CORRUPT / FUTURE_VERSION). Status line rendering, evolution, and commentary are coming in future releases.
 
 ## Requirements
 
@@ -33,11 +33,16 @@ claude plugin install .
 
 | Command | Description |
 |---------|-------------|
-| `/buddy:hatch` | Hatch a new buddy (random species, rarity, stats) |
-| `/buddy:interact` | Talk to your buddy |
-| `/buddy:stats` | View your buddy's stats, level, and evolution progress |
+| `/buddy:hatch` | Hatch a new buddy (random species, rarity, stats). Re-running on an existing buddy prints reroll consequences; add `--confirm` to actually reroll (costs 10 tokens from P5 onward). |
+| `/buddy:stats` | View your buddy's stats, level, XP progress, and token balance. |
+| `/buddy:reset` | Wipe your buddy and start fresh. Requires `--confirm`. |
+| `/buddy:interact` | Talk to your buddy (P0 scaffold; full interaction system comes later). |
 
-If you haven't hatched a buddy yet, `/buddy:interact` and `/buddy:stats` will prompt you to run `/buddy:hatch` first.
+Destructive operations (reroll, reset) require an explicit `--confirm` flag because SKILL.md can't reliably do mid-execution interactive prompts — the flag is the confirmation. Without it, the command prints the consequences and exits.
+
+> **Note on namespacing:** plugin skills are always invoked as `/<plugin>:<skill>`. There's no way to expose a bare `/buddy` from a plugin — that name is reserved for Anthropic's built-in. See [`docs/solutions/developer-experience/claude-code-plugin-scaffolding-gotchas-2026-04-16.md`](docs/solutions/developer-experience/claude-code-plugin-scaffolding-gotchas-2026-04-16.md) for the full story.
+
+If you haven't hatched a buddy yet, `/buddy:interact`, `/buddy:stats`, and `/buddy:reset` will print a short pointer to `/buddy:hatch`.
 
 ## Libraries
 
