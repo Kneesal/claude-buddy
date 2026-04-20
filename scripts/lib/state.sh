@@ -44,6 +44,16 @@ if [[ "${_STATE_SH_LOADED:-}" != "1" ]]; then
   readonly ORPHAN_MAX_AGE_MINUTES=60
   readonly ORPHAN_HARD_AGE_MINUTES=$((24 * 60))
 
+  # Session files have a separate, much longer TTL than .tmp files. Every
+  # hook write renames a fresh tmp over the session file, so an ACTIVE
+  # session refreshes its own mtime on every tool call. Mtime only ages
+  # when the session is genuinely idle (user reading a long response,
+  # thinking, away from keyboard). 24h is the ceiling — beyond that,
+  # a dead session's file is safe to reap. Keeping this distinct from
+  # ORPHAN_MAX_AGE_MINUTES prevents a concurrent window's SessionStart
+  # sweep from deleting a live-but-idle session's file (P3-1 review #1).
+  readonly SESSION_FILE_MAX_AGE_MINUTES=$((24 * 60))
+
   # Safety net for _state_migrate — the real requirement is that each migration
   # case arm bump .schemaVersion. This cap catches bugs, not normal operation.
   readonly MIGRATE_MAX_ITERATIONS=32
@@ -420,8 +430,17 @@ state_cleanup_orphans() {
   # Pass 2: hard-age upper bound — unconditional removal of very old .tmp files
   find "$data_dir" -maxdepth 1 -name '.tmp.*' -mmin "+$ORPHAN_HARD_AGE_MINUTES" -delete 2>/dev/null || true
 
-  # Remove stale session files
-  find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin "+$ORPHAN_MAX_AGE_MINUTES" -delete 2>/dev/null || true
+  # Remove stale session files. Uses SESSION_FILE_MAX_AGE_MINUTES (24h
+  # by default) rather than the 60-minute tmp TTL — an active but idle
+  # session's file must not be deleted by a concurrent window's sweep.
+  # See P3-1 review finding #1.
+  find "$data_dir" -maxdepth 1 -name 'session-*.json' -mmin "+$SESSION_FILE_MAX_AGE_MINUTES" -delete 2>/dev/null || true
+
+  # Remove matching stale session lock files (created by hooks holding
+  # a flock over the load-modify-save cycle; see P3-1 review #2). Safe
+  # to delete on the same cadence — a live lock is held with flock, and
+  # an unlink on a live-flock'd file doesn't affect the running hook.
+  find "$data_dir" -maxdepth 1 -name 'session-*.json.lock' -mmin "+$SESSION_FILE_MAX_AGE_MINUTES" -delete 2>/dev/null || true
 
   # Remove any orphaned buddy.json.deleted marker left behind by a reset that
   # was killed between the rename and the unlink. The file is transient by

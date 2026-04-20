@@ -479,6 +479,7 @@ rm -f "$data_dir/buddy.json.deleted" 2>/dev/null || true
 
 ## Related
 
+- [bash-state-library-concurrent-load-modify-save-2026-04-20.md](./bash-state-library-concurrent-load-modify-save-2026-04-20.md) — **partial update to this doc's guidance.** The `session_save` primitive here is documented as "typically single-writer" with no flock. P3-1 (hooks) made it a concurrent load-modify-save consumer; the new doc covers the caller-held flock pattern that must accompany this library when hooks are in play. If you're wiring hooks or background jobs to session state, read that doc alongside this one.
 - [claude-code-plugin-scaffolding-gotchas-2026-04-16.md](../developer-experience/claude-code-plugin-scaffolding-gotchas-2026-04-16.md) — establishes the "hooks must exit 0" plugin-system constraint that motivates this library's no-module-level-`set -e` design.
 - [claude-code-skill-dispatcher-pattern-2026-04-19.md](../developer-experience/claude-code-skill-dispatcher-pattern-2026-04-19.md) — the SKILL.md-as-thin-dispatcher convention that invokes the backing bash scripts (including the reset command) which apply the atomic-delete dance documented here.
 - [P1-1 state primitives plan](../../plans/2026-04-16-003-feat-p1-1-state-primitives-plan.md) — the plan document that produced this library.
