@@ -1,7 +1,7 @@
 ---
 title: P3-2 — Commentary engine (canned v1)
 type: feat
-status: active
+status: complete
 date: 2026-04-20
 origin: docs/roadmap/P3-2-commentary-engine.md
 ---
@@ -248,7 +248,7 @@ Session JSON shape after P3-2:
 
 ## Implementation Units
 
-- [ ] **Unit 1: `userConfig` + plugin manifest**
+- [x] **Unit 1: `userConfig` + plugin manifest**
 
 **Goal:** Surface `commentsPerSession` (default 8) as a user knob.
 
@@ -273,7 +273,7 @@ Session JSON shape after P3-2:
 
 ---
 
-- [ ] **Unit 2: Session-file shape extension**
+- [x] **Unit 2: Session-file shape extension**
 
 **Goal:** Add commentary/cooldown fields to the canonical initial shape, wired through `hook_initial_session_json`.
 
@@ -301,7 +301,7 @@ Session JSON shape after P3-2:
 
 ---
 
-- [ ] **Unit 3: `scripts/hooks/commentary.sh` — rate-limit + selection logic**
+- [x] **Unit 3: `scripts/hooks/commentary.sh` — rate-limit + selection logic**
 
 **Goal:** Ship the pure decision/selection logic, no hook wiring yet.
 
@@ -350,7 +350,7 @@ Session JSON shape after P3-2:
 
 ---
 
-- [ ] **Unit 4: Line-bank content for 5 species × 3 event types + milestone banks**
+- [x] **Unit 4: Line-bank content for 5 species × 3 event types + milestone banks**
 
 **Goal:** 50+ lines per species per major event (`PostToolUse`, `PostToolUseFailure`, `Stop`), plus shared milestone banks where it makes the voice richer.
 
@@ -394,7 +394,7 @@ Session JSON shape after P3-2:
 
 ---
 
-- [ ] **Unit 5: Wire commentary into the three hook scripts**
+- [x] **Unit 5: Wire commentary into the three hook scripts**
 
 **Goal:** Every hook emits (or silently skips) a line per the decision in Unit 3.
 
@@ -437,7 +437,7 @@ Session JSON shape after P3-2:
 
 ---
 
-- [ ] **Unit 6: Live-session smoke — confirm commentary surfaces in transcript**
+- [x] **Unit 6: Live-session smoke — confirm commentary surfaces in transcript**
 
 **Goal:** Verify empirically that the stdout commentary actually lands in the Claude Code transcript as a user-visible line.
 
@@ -463,7 +463,7 @@ Session JSON shape after P3-2:
 
 ---
 
-- [ ] **Unit 7: Solutions / Notes pass**
+- [x] **Unit 7: Solutions / Notes pass**
 
 **Goal:** Update roadmap ticket Notes; write a solutions doc only if something surprises.
 

@@ -80,6 +80,9 @@ setup() {
   _setup_species_fixture
   export _BUDDY_COMMENTARY_NOW=1745150000
   # Fixed shuffle: indexes in ascending order. Bank length ≤ 10 in fixtures.
+  # TEST_MODE gate required so a leaked shell export can't make
+  # production deterministic.
+  export _BUDDY_COMMENTARY_TEST_MODE=1
   export _BUDDY_COMMENTARY_SHUFFLE="0 1 2 3 4 5 6 7 8 9"
   unset BUDDY_COMMENTS_PER_SESSION
   unset BUDDY_STOP_LINE_ON_EXIT
@@ -87,6 +90,7 @@ setup() {
 
 teardown() {
   unset _BUDDY_COMMENTARY_NOW
+  unset _BUDDY_COMMENTARY_TEST_MODE
   unset _BUDDY_COMMENTARY_SHUFFLE
   unset BUDDY_SPECIES_DIR
   unset BUDDY_COMMENTS_PER_SESSION
@@ -278,36 +282,50 @@ teardown() {
 # Shuffle-bag: no repeats within a cycle
 # ------------------------------------------------------------
 
-@test "Shuffle-bag: no repeats across 5 draws; refills on 6th" {
+@test "Shuffle-bag: no repeats across 5 draws; refills into full permutation" {
   unset _BUDDY_COMMENTARY_SHUFFLE
-  local buddy current seen="" line
+  # Default budget cap is 8 — 10 draws would hit the cap on draw 9.
+  # Widen it for this test; shuffle semantics are what we're proving.
+  export BUDDY_COMMENTS_PER_SESSION=20
+  local buddy current seen_cycle1="" seen_cycle2="" line
   buddy="$(_buddy_json)"
   current="$(_session_json | jq '.commentary.firstEditFired = true')"
 
   local i
+  # First 5 draws — every line unique within the cycle.
   for i in 1 2 3 4 5; do
     current="$(echo "$current" | jq '.lastEventType = "Stop" | .cooldowns = {}')"
     _call PostToolUse "$current" "$buddy"
     [ -n "$_BUDDY_COMMENT_LINE" ]
     current="$_BUDDY_SESSION_UPDATED"
     line="$(printf '%s' "$_BUDDY_COMMENT_LINE" | sed 's/.*: "\(.*\)"/\1/')"
-    [[ "$seen" != *"|$line|"* ]]
-    seen="$seen|$line|"
+    [[ "$seen_cycle1" != *"|$line|"* ]]
+    seen_cycle1="$seen_cycle1|$line|"
   done
 
   [ "$(echo "$current" | jq -r '.commentary.bags["PostToolUse.default"] | length')" = "0" ]
 
-  # 6th draw refills and emits with no crash.
-  current="$(echo "$current" | jq '.lastEventType = "Stop" | .cooldowns = {}')"
-  _call PostToolUse "$current" "$buddy"
-  [ -n "$_BUDDY_COMMENT_LINE" ]
+  # Second 5 draws — refill exercised, should also be a full permutation
+  # (no duplicates within cycle 2). This guards against a regression
+  # where refill seeds with a partial or duplicate-heavy sequence.
+  for i in 6 7 8 9 10; do
+    current="$(echo "$current" | jq '.lastEventType = "Stop" | .cooldowns = {}')"
+    _call PostToolUse "$current" "$buddy"
+    [ -n "$_BUDDY_COMMENT_LINE" ]
+    current="$_BUDDY_SESSION_UPDATED"
+    line="$(printf '%s' "$_BUDDY_COMMENT_LINE" | sed 's/.*: "\(.*\)"/\1/')"
+    [[ "$seen_cycle2" != *"|$line|"* ]]
+    seen_cycle2="$seen_cycle2|$line|"
+  done
+  # Bag empty again — 5 elements drawn from a refilled 5-element bag.
+  [ "$(echo "$current" | jq -r '.commentary.bags["PostToolUse.default"] | length')" = "0" ]
 }
 
 # ------------------------------------------------------------
 # Error / edge paths
 # ------------------------------------------------------------
 
-@test "Empty bank: silent skip, no crash" {
+@test "Empty bank: silent skip, no crash, session remains valid JSON" {
   cat > "$BUDDY_SPECIES_DIR/emptyfrog.json" <<'JSON'
 { "schemaVersion": 1, "species": "emptyfrog", "emoji": "🪨", "voice": "empty",
   "line_banks": { "PostToolUse": { "default": [] }, "PostToolUseFailure": { "default": [] }, "Stop": { "default": [] } } }
@@ -317,9 +335,12 @@ JSON
   session="$(_session_json)"
   _call PostToolUse "$session" "$buddy"
   [ -z "$_BUDDY_COMMENT_LINE" ]
+  # Error paths must still emit valid JSON on line 2 — session_save
+  # would otherwise persist garbage.
+  echo "$_BUDDY_SESSION_UPDATED" | jq -e '.' >/dev/null
 }
 
-@test "Malformed line_banks: silent skip, no crash" {
+@test "Malformed line_banks: silent skip, session remains valid JSON" {
   cat > "$BUDDY_SPECIES_DIR/weirdfrog.json" <<'JSON'
 { "schemaVersion": 1, "species": "weirdfrog", "emoji": "❓", "voice": "?",
   "line_banks": { "PostToolUse": "not-an-object" } }
@@ -329,21 +350,59 @@ JSON
   session="$(_session_json)"
   _call PostToolUse "$session" "$buddy"
   [ -z "$_BUDDY_COMMENT_LINE" ]
+  echo "$_BUDDY_SESSION_UPDATED" | jq -e '.' >/dev/null
 }
 
-@test "Missing species file: silent skip, no crash" {
+@test "Missing species file: silent skip, session remains valid JSON" {
   local buddy session
   buddy="$(_buddy_json nonesuch Nope)"
   session="$(_session_json)"
   _call PostToolUse "$session" "$buddy"
   [ -z "$_BUDDY_COMMENT_LINE" ]
+  echo "$_BUDDY_SESSION_UPDATED" | jq -e '.' >/dev/null
 }
 
-@test "Path-traversal species: silent skip, no crash" {
+@test "Path-traversal species: silent skip, session remains valid JSON" {
   local buddy session
   buddy="$(_buddy_json "../etc/passwd" Hax)"
   session="$(_session_json)"
   _call PostToolUse "$session" "$buddy"
+  [ -z "$_BUDDY_COMMENT_LINE" ]
+  echo "$_BUDDY_SESSION_UPDATED" | jq -e '.' >/dev/null
+}
+
+@test "Missing buddy species/name: session remains valid JSON" {
+  local buddy session
+  buddy='{"schemaVersion":1,"buddy":{}}'
+  session="$(_session_json)"
+  _call PostToolUse "$session" "$buddy"
+  [ -z "$_BUDDY_COMMENT_LINE" ]
+  echo "$_BUDDY_SESSION_UPDATED" | jq -e '.' >/dev/null
+}
+
+@test "Control bytes in buddy name are stripped from transcript emit" {
+  local buddy session
+  # Embed ANSI CSI (ESC[31m) and BEL in the name.
+  buddy="$(jq -n --arg n $'bad\x1b[31mname\x07' '{
+    schemaVersion: 1,
+    buddy: { species: "testfrog", name: $n, rarity: "common", stats: {}, form: "base", level: 1, xp: 0 }
+  }')"
+  session="$(_session_json)"
+  _call PostToolUse "$session" "$buddy"
+  # Output must not contain raw escape or BEL bytes.
+  [[ "$_BUDDY_COMMENT_LINE" != *$'\x1b'* ]]
+  [[ "$_BUDDY_COMMENT_LINE" != *$'\x07'* ]]
+}
+
+@test "BUDDY_STOP_LINE_ON_EXIT deny-list tolerates 'True' and whitespace" {
+  local buddy session
+  buddy="$(_buddy_json)"
+  session="$(_session_json)"
+  # 'True' (Python-style title case) should still enable per deny-list.
+  BUDDY_STOP_LINE_ON_EXIT=True _call Stop "$session" "$buddy"
+  [ -n "$_BUDDY_COMMENT_LINE" ]
+  # Surrounding whitespace on a falsy value should still disable.
+  BUDDY_STOP_LINE_ON_EXIT=" false " _call Stop "$session" "$buddy"
   [ -z "$_BUDDY_COMMENT_LINE" ]
 }
 
@@ -362,14 +421,6 @@ JSON
   session="$(_session_json)"
   _call PostToolUse "$session" "$buddy"
   [[ "$_BUDDY_COMMENT_LINE" =~ ^🐸\ Kermit:\ \".+\"$ ]]
-}
-
-@test "Missing buddy species/name: silent skip" {
-  local buddy session
-  buddy='{"schemaVersion":1,"buddy":{}}'
-  session="$(_session_json)"
-  _call PostToolUse "$session" "$buddy"
-  [ -z "$_BUDDY_COMMENT_LINE" ]
 }
 
 @test "Session JSON is single-line (jq -c compatible for split)" {

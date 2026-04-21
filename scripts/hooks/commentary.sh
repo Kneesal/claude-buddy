@@ -36,8 +36,10 @@
 #   1. Event-novelty gate — skip if session.lastEventType == event_type.
 #      lastEventType is always updated on observation (D5).
 #   2. Exponential backoff per event type — cooldowns[<event>] =
-#      { fires, nextAllowedAt: epoch-secs }. fires=0 → immediate,
-#      fires=1 → +5min, fires≥2 → +15min.
+#      { fires, nextAllowedAt: epoch-secs }. `fires` counts prior
+#      emits for this event. After the first emit we set
+#      +5min cooldown (prev_fires was 0); after the second emit and
+#      beyond we set +15min (prev_fires was >=1). See D4 of the plan.
 #   3. Per-session budget — commentsThisSession < BUDDY_COMMENTS_PER_SESSION
 #      (default 8). Stop bypasses.
 #
@@ -54,10 +56,14 @@
 #   BUDDY_COMMENTS_PER_SESSION — override the per-session cap.
 #   BUDDY_STOP_LINE_ON_EXIT    — "0"/"false" disables the Stop goodbye.
 #   _BUDDY_COMMENTARY_NOW      — integer epoch-seconds; mocks the clock.
-#   _BUDDY_COMMENTARY_SHUFFLE  — space-separated integers; if set, used
+#   _BUDDY_COMMENTARY_SHUFFLE  — space-separated integers; if set AND
+#                                _BUDDY_COMMENTARY_TEST_MODE=1, used
 #                                verbatim as the refill order instead
-#                                of $RANDOM-shuffling. Length must match
-#                                the bank length.
+#                                of $RANDOM-shuffling. Length should
+#                                match the bank length. The TEST_MODE
+#                                gate prevents a leaked shell-dotfile
+#                                export from turning production
+#                                deterministic.
 #   BUDDY_SPECIES_DIR          — already honored by rng.sh; same convention
 #                                here for species JSON lookup.
 
@@ -73,6 +79,14 @@ if [[ "${_BUDDY_COMMENTARY_LOADED:-}" != "1" ]]; then
   # the error_burst bank (if present and non-empty).
   readonly _COMMENTARY_BURST_WINDOW_SECS=300
   readonly _COMMENTARY_BURST_THRESHOLD=3
+
+  # Hard cap on recentFailures length. Time-window pruning is the
+  # primary bound, but a tight retry loop could enqueue thousands
+  # before the prune condition kicks in. Session JSON inflates,
+  # jq work scales, flock-held time creeps toward the 0.2s timeout.
+  # 20 is comfortably above the BURST_THRESHOLD (3) yet keeps the
+  # blob small.
+  readonly _COMMENTARY_RECENT_FAILURES_MAX=20
 
   # Long-session milestone threshold. startedAt > 1h ago picks the
   # Stop.long_session bank.
@@ -125,31 +139,56 @@ _commentary_species_dir() {
   printf '%s/../species' "$hooks_dir"
 }
 
-# Budget cap for this session. Falls back to default on invalid input.
+# Budget cap for this session. Falls back to default on invalid
+# input. plugin.json declares commentsPerSession as `type: number`
+# so Claude Code may pass a float (8.5) through the env. We require
+# a non-negative integer and log at most once per process on any
+# other value so the user can see their knob was ignored.
 _commentary_budget_cap() {
   local raw="${BUDDY_COMMENTS_PER_SESSION:-}"
-  if [[ "$raw" =~ ^[0-9]+$ ]] && (( raw >= 0 )); then
-    printf '%d' "$raw"
-  else
+  if [[ -z "$raw" ]]; then
     printf '%d' "$_COMMENTARY_DEFAULT_BUDGET"
+    return 0
   fi
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    printf '%d' "$raw"
+    return 0
+  fi
+  # Log once, via the hook logging facility if available. Silent in
+  # test contexts that source commentary.sh without common.sh.
+  if declare -F hook_log_error >/dev/null 2>&1 \
+       && [[ -z "${_BUDDY_BUDGET_CAP_WARNED:-}" ]]; then
+    hook_log_error "commentary" "ignoring non-integer BUDDY_COMMENTS_PER_SESSION=$raw; using default $_COMMENTARY_DEFAULT_BUDGET"
+    _BUDDY_BUDGET_CAP_WARNED=1
+  fi
+  printf '%d' "$_COMMENTARY_DEFAULT_BUDGET"
 }
 
-# True if the Stop goodbye is enabled. Any value except "0"/"false"/""
-# means enabled (matches manifest default true).
+# True if the Stop goodbye is enabled. Deny-list: only explicit
+# falsy values (0, false, no — any case) disable. Everything else
+# (including unset, empty, "1", "true", "True", "on", "yes", and
+# platform-serialization variants with surrounding whitespace) is
+# treated as enabled. Matches the manifest default of true and
+# tolerates Claude Code's boolean-serialization drift.
 _commentary_stop_enabled() {
   local raw="${BUDDY_STOP_LINE_ON_EXIT:-}"
+  # Trim surrounding whitespace so " true " etc. match.
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
   case "$raw" in
-    "" | "1" | "true" | "TRUE" | "yes" | "YES") return 0 ;;
-    *) return 1 ;;
+    "0" | "false" | "False" | "FALSE" | "no" | "No" | "NO") return 1 ;;
+    *) return 0 ;;
   esac
 }
 
 # Emit a shuffled integer sequence 0..(N-1) as space-separated ints.
-# _BUDDY_COMMENTARY_SHUFFLE overrides for tests (must match N).
+# _BUDDY_COMMENTARY_SHUFFLE overrides for tests (must match N) but
+# only when _BUDDY_COMMENTARY_TEST_MODE=1 — a leaked shell export of
+# the shuffle var alone is ignored in production.
 _commentary_shuffle_seq() {
   local n="$1"
-  if [[ -n "${_BUDDY_COMMENTARY_SHUFFLE:-}" ]]; then
+  if [[ "${_BUDDY_COMMENTARY_TEST_MODE:-}" == "1" \
+        && -n "${_BUDDY_COMMENTARY_SHUFFLE:-}" ]]; then
     # Test override: emit verbatim. Caller is responsible for length
     # matching; mismatch will surface as an out-of-range index at draw
     # time, which is the behavior we want in tests.
@@ -206,14 +245,25 @@ hook_commentary_select() {
 
   # Pass-through fallback used on every early-exit path. Emits a
   # blank comment line + the session JSON (compacted via jq -c so
-  # the newline split is unambiguous — multi-line JSON would poison
-  # the caller's simple split).
+  # the newline split is unambiguous).
+  #
+  # If jq -c fails (signal, OOM, invalid input), we suppress the emit
+  # entirely and return an empty comment + empty session. The caller's
+  # defensive `if [[ -z "$final_session" ]]; then final_session="$ring_updated"`
+  # keeps the ring update but drops the commentary decision — that is
+  # safer than emitting pretty-printed multi-line JSON that would
+  # poison the caller's two-line split and corrupt session state.
   _commentary_emit() {
     local compact
     compact="$(printf '%s' "$_BUDDY_SESSION_UPDATED" | jq -c '.' 2>/dev/null)"
-    # Fall back to the raw value if jq fails — better to emit possibly-
-    # multi-line JSON than to silently drop the session update.
-    [[ -z "$compact" ]] && compact="$_BUDDY_SESSION_UPDATED"
+    if [[ -z "$compact" ]]; then
+      # jq failed or input is malformed — bail safely. The comment is
+      # already set (possibly to a good value for this call) but we
+      # clear it so the caller doesn't emit a line unbacked by a saved
+      # session. Two empty lines is a valid "nothing happened" reply.
+      printf '\n'
+      return
+    fi
     printf '%s\n%s' "$_BUDDY_COMMENT_LINE" "$compact"
   }
 
@@ -352,13 +402,18 @@ _commentary_handle_ptuf() {
   local session_json="$_BUDDY_SESSION_UPDATED"
 
   # Update recentFailures unconditionally — the burst trigger wants
-  # to see real event density even if the gate skips the emit.
+  # to see real event density even if the gate skips the emit. Prune
+  # by time window first, then hard-cap the tail so a pathological
+  # error loop can't inflate the session blob (we only need the last
+  # few entries to evaluate the BURST_THRESHOLD).
   session_json="$(printf '%s' "$session_json" | jq \
     --argjson now "$now" \
     --argjson window "$_COMMENTARY_BURST_WINDOW_SECS" \
+    --argjson cap "$_COMMENTARY_RECENT_FAILURES_MAX" \
     '.recentFailures = (
        ((.recentFailures // []) + [$now])
        | map(select(type == "number" and . > ($now - $window)))
+       | .[-($cap):]
      )' 2>/dev/null)"
   [[ -z "$session_json" ]] && return
 
@@ -597,10 +652,15 @@ _commentary_format() {
   local emoji="$1"
   local name="$2"
   local line="$3"
-  # Strip any embedded newlines so the commentary stays a single
-  # transcript line. jq content is already escaped for quoting.
-  line="${line//$'\n'/ }"
-  line="${line//$'\r'/ }"
+  # Strip control bytes before emitting to the transcript. Species line
+  # content and buddy.name are author-controlled; a crafted entry with
+  # ANSI/CSI escapes (\x1b), backspace (\x08), or other control bytes
+  # could hijack the transcript surface or downstream agent automation
+  # that keys off commentary text. tr -d '[:cntrl:]' removes the
+  # \x00-\x1f and \x7f class. \t is also in [:cntrl:] so this is
+  # strictly tighter than the prior \n/\r-only strip.
+  name="$(printf '%s' "$name" | tr -d '[:cntrl:]')"
+  line="$(printf '%s' "$line" | tr -d '[:cntrl:]')"
   if [[ -n "$emoji" ]]; then
     printf '%s %s: "%s"' "$emoji" "$name" "$line"
   else
