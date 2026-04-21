@@ -197,11 +197,19 @@ hook_signals_apply() {
      end) as $streak |
 
     # --- variety.toolsUsed: set + prune ---
+    # The set is PTU-only per the ticket requirement to append the tool
+    # name on PostToolUse. PTUF attempts and Stop events do not count as
+    # tool usage (a failed Edit did not successfully exercise the tool
+    # surface). Prune still runs on every event so the 7-day retention
+    # window advances even on non-PTU fires.
     ($in.toolName // "") as $tool |
     ($in.now // 0 | tonumber? // 0) as $now |
     (
       ($sig.variety.toolsUsed // {})
-      | (if $tool != "" then .[$tool] = $now else . end)
+      | (if $event == "PostToolUse" and $tool != ""
+           then .[$tool] = $now
+           else .
+         end)
       | with_entries(select(
           (.value | type) == "number" and .value > ($now - $retention)
         ))

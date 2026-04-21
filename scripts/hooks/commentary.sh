@@ -288,7 +288,7 @@ hook_commentary_select() {
   _BUDDY_SESSION_UPDATED="$session_json"
 
   case "$event_type" in
-    PostToolUse|PostToolUseFailure|Stop) ;;
+    PostToolUse|PostToolUseFailure|Stop|LevelUp) ;;
     *)
       # Unknown event — pass-through. Hook layer never crashes.
       _commentary_emit
@@ -333,9 +333,10 @@ hook_commentary_select() {
   emoji="$(printf '%s' "$species_json" | jq -r '.emoji // ""' 2>/dev/null)"
 
   case "$event_type" in
-    PostToolUse)        _commentary_handle_ptu  "$species_json" "$name" "$emoji" "$now" ;;
-    PostToolUseFailure) _commentary_handle_ptuf "$species_json" "$name" "$emoji" "$now" ;;
-    Stop)               _commentary_handle_stop "$species_json" "$name" "$emoji" "$now" ;;
+    PostToolUse)        _commentary_handle_ptu       "$species_json" "$name" "$emoji" "$now" ;;
+    PostToolUseFailure) _commentary_handle_ptuf      "$species_json" "$name" "$emoji" "$now" ;;
+    Stop)               _commentary_handle_stop      "$species_json" "$name" "$emoji" "$now" ;;
+    LevelUp)            _commentary_handle_level_up  "$species_json" "$name" "$emoji" "$now" ;;
   esac
 
   _commentary_emit
@@ -595,6 +596,30 @@ _commentary_handle_ptuf() {
   local updated
   updated="$(_commentary_apply_emit_mutations "$post_draw" "$event_type" "$now" "$prev_fires" "false")"
   [[ -z "$updated" ]] && return
+
+  _BUDDY_COMMENT_LINE="$(_commentary_format "$emoji" "$name" "$line")"
+  _BUDDY_SESSION_UPDATED="$updated"
+}
+
+_commentary_handle_level_up() {
+  local species_json="$1"
+  local name="$2"
+  local emoji="$3"
+  local now="$4"
+  local event_type="LevelUp"
+
+  # Bypass all three rate-limit gates — level-ups are infrequent and
+  # more informative than the per-event chatter they override (D9 of
+  # the P4-1 plan). Do NOT bump commentsThisSession here: the budget
+  # is for steady-state chatter and level-ups should never count
+  # against it.
+  local line_and_session
+  line_and_session="$(_commentary_draw "$_BUDDY_SESSION_UPDATED" "$species_json" "$event_type" "default")"
+  [[ -z "$line_and_session" ]] && return
+
+  local line updated
+  line="${line_and_session%%$'\t'*}"
+  updated="${line_and_session#*$'\t'}"
 
   _BUDDY_COMMENT_LINE="$(_commentary_format "$emoji" "$name" "$line")"
   _BUDDY_SESSION_UPDATED="$updated"
