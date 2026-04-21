@@ -30,6 +30,16 @@ load test_helper
   [ "$level" = "1" ]
   # Pity is 0 (Rare+) or 1 (Common) depending on the random roll.
   [[ "$pity" =~ ^[0-9]+$ ]]
+
+  # P4-1: signals skeleton is baked in so new hatches start with the
+  # full four-axis shape.
+  [ "$(jq -r '.buddy.signals.consistency.streakDays' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.consistency.lastActiveDay' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "1970-01-01" ]
+  [ "$(jq -r '.buddy.signals.variety.toolsUsed | type' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "object" ]
+  [ "$(jq -r '.buddy.signals.quality.successfulEdits' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.quality.totalEdits' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.chaos.errors' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.chaos.repeatedEditHits' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
 }
 
 @test "hatch: first hatch ignores --confirm flag (treats it as first hatch, not reroll)" {

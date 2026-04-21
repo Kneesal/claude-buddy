@@ -2,7 +2,7 @@
 id: P4-1
 title: XP + evolution signal accumulation
 phase: P4
-status: todo
+status: in-progress
 depends_on: [P3-1]
 origin_plan: docs/plans/2026-04-16-001-feat-claude-buddy-plugin-plan.md
 ---

@@ -151,7 +151,7 @@ hook_extract_tool_use_id() {
 # Used by SessionStart (primary init) and by other hooks that find a
 # missing session file (defensive re-init per D3 of the P3-1 plan).
 #
-# The shape (P3-2):
+# The shape (P3-2 + P4-1):
 #   {
 #     "schemaVersion": 1,
 #     "sessionId": "<id>",
@@ -161,6 +161,7 @@ hook_extract_tool_use_id() {
 #     "lastEventType": null,
 #     "commentsThisSession": 0,
 #     "recentFailures": [],
+#     "lastToolFilePath": "",
 #     "commentary": {
 #       "bags": {},
 #       "firstEditFired": false
@@ -173,6 +174,8 @@ hook_extract_tool_use_id() {
 # (pre-P3-2) that round-trip through session_load → modify → session_save
 # pick up the new fields lazily via jq `// default` reads in
 # commentary.sh, so mid-session plugin upgrades don't need a migration.
+# lastToolFilePath (P4-1) is the same: additive, defaulted to "" on
+# read. Feeds chaos.repeatedEditHits — see scripts/hooks/signals.sh.
 hook_initial_session_json() {
   local session_id="$1"
   local started_at
@@ -189,6 +192,7 @@ hook_initial_session_json() {
       lastEventType: null,
       commentsThisSession: 0,
       recentFailures: [],
+      lastToolFilePath: "",
       commentary: {
         bags: {},
         firstEditFired: false

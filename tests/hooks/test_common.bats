@@ -207,6 +207,15 @@ setup() {
   [ "$(echo "$output" | jq -r '.commentary.firstEditFired')" = "false" ]
 }
 
+@test "hook_initial_session_json: P4-1 lastToolFilePath present and empty" {
+  run hook_initial_session_json "sess-p41"
+  [ "$status" -eq 0 ]
+  # Field exists (not null/missing) and starts as empty string. Feeds
+  # chaos.repeatedEditHits detection in signals.sh.
+  [ "$(echo "$output" | jq -r '.lastToolFilePath')" = "" ]
+  [ "$(echo "$output" | jq -r '.lastToolFilePath | type')" = "string" ]
+}
+
 # ------------------------------------------------------------
 # hook_ring_push + hook_ring_contains
 # ------------------------------------------------------------
