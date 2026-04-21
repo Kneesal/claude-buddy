@@ -11,11 +11,28 @@
     "snark": "neutral"
   },
   "name_pool": [
-    "Bruno", "Cuzco", "Mango", "Poncho", "Nacho",
-    "Tulum", "Pepino", "Churro", "Chico", "Mingo",
-    "Paco", "Javi", "Luna", "Piru", "Tino",
-    "Salsa", "Coco", "Pablo", "Guava", "Zenzi",
-    "Basil", "Moss"
+    "Bruno",
+    "Cuzco",
+    "Mango",
+    "Poncho",
+    "Nacho",
+    "Tulum",
+    "Pepino",
+    "Churro",
+    "Chico",
+    "Mingo",
+    "Paco",
+    "Javi",
+    "Luna",
+    "Piru",
+    "Tino",
+    "Salsa",
+    "Coco",
+    "Pablo",
+    "Guava",
+    "Zenzi",
+    "Basil",
+    "Moss"
   ],
   "evolution_paths": {},
   "line_banks": {
@@ -218,6 +235,22 @@
         "the current was slow but the distance was long",
         "look up. see a window. step outside",
         "that was a river crossing, a whole one — rest well"
+      ]
+    },
+    "LevelUp": {
+      "default": [
+        "level up. enjoying the breeze.",
+        "we grew. the water is warm.",
+        "ding. nap later to celebrate.",
+        "new level, same chill mood.",
+        "stretched up a bit. the grass is good.",
+        "promoted. the sun feels nice.",
+        "one step higher. everything still calm.",
+        "leveled. the river keeps flowing.",
+        "small victory. saved for later.",
+        "going up. taking it slow.",
+        "level up. nothing to prove.",
+        "gained a tier. unbothered as ever."
       ]
     }
   },

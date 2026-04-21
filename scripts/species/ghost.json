@@ -11,11 +11,28 @@
     "snark": "peak-prefer"
   },
   "name_pool": [
-    "Moth", "Hush", "Wisp", "Vapor", "Shade",
-    "Cobweb", "Drift", "Echo", "Gloom", "Hollow",
-    "Mire", "Murk", "Null", "Pall", "Quiet",
-    "Sable", "Tarry", "Umbra", "Veil", "Wraith",
-    "Dusk", "Eerie"
+    "Moth",
+    "Hush",
+    "Wisp",
+    "Vapor",
+    "Shade",
+    "Cobweb",
+    "Drift",
+    "Echo",
+    "Gloom",
+    "Hollow",
+    "Mire",
+    "Murk",
+    "Null",
+    "Pall",
+    "Quiet",
+    "Sable",
+    "Tarry",
+    "Umbra",
+    "Veil",
+    "Wraith",
+    "Dusk",
+    "Eerie"
   ],
   "evolution_paths": {},
   "line_banks": {
@@ -218,6 +235,22 @@
         "we went the distance, in a low-key way",
         "an impressive stretch, in my understated opinion",
         "go rest. the code will still be here, i'll make sure"
+      ]
+    },
+    "LevelUp": {
+      "default": [
+        "...something shifted. leveled up.",
+        "a quiet promotion. nothing changed.",
+        "we moved up a step. imperceptible.",
+        "ding. faintly.",
+        "the meter advanced. the room is unchanged.",
+        "level up. i feel...roughly the same.",
+        "something faint, moving forward.",
+        "gained a level. the wallpaper peels slightly.",
+        "one rung higher. no one will notice.",
+        "a small ascent. for the ledger.",
+        "progression. cold and quiet.",
+        "level achieved. very quietly."
       ]
     }
   },

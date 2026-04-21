@@ -46,6 +46,17 @@ SPECIES_FILES=(
   done
 }
 
+@test "species: P4-1 LevelUp.default has ≥10 lines per species" {
+  # Level-ups are infrequent (50 levels total) so the bank is smaller
+  # than the per-event defaults. 10+ keeps the shuffle-bag fresh
+  # across a realistic play-through without fight-club repeats.
+  for f in "${SPECIES_FILES[@]}"; do
+    local n
+    n="$(jq -r '.line_banks.LevelUp.default | length' "$f")"
+    [ "$n" -ge 10 ] || { echo "$f: LevelUp.default has $n"; return 1; }
+  done
+}
+
 @test "species: milestone banks are non-empty when present" {
   # first_edit / error_burst / long_session are currently shipped on
   # every species. If a species drops one later, the engine silently
