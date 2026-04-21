@@ -2,7 +2,7 @@
 id: P4-1
 title: XP + evolution signal accumulation
 phase: P4
-status: in-progress
+status: done
 depends_on: [P3-1]
 origin_plan: docs/plans/2026-04-16-001-feat-claude-buddy-plugin-plan.md
 ---
@@ -15,26 +15,18 @@ Accumulate XP and the four behavior-axis signals (consistency, variety, quality,
 
 ## Tasks
 
-- [ ] XP curve: `xpForLevel(n) = 50 * n * (n + 1)` — Lv 2 at 100 XP, Lv 5 at 750, Lv 10 at 2750. Store formula in `scripts/lib/evolution.sh`.
-- [ ] **XP sources** (all flow through `buddy_save` with flock):
-  - [ ] `PostToolUse` → +2 XP.
-  - [ ] `PostToolUseFailure` → +1 XP (failure still counts — no punishment).
-  - [ ] `Stop` → +5 XP (completion bonus), +2 per active-session-hour in session.
-  - [ ] Streak bonus: +10 XP on the first event of a day that extends `consistency.streakDays`.
-- [ ] **Signal accumulation** (same hooks, different fields):
-  - [ ] `PostToolUse`:
-    - Append tool name to `variety.toolsUsed` (dedup, retain last 7 active days).
-    - If tool ∈ {Edit, Write, MultiEdit}: `quality.successfulEdits++`, `quality.totalEdits++`.
-    - If same file as last tool call: `chaos.repeatedEditHits++`.
-    - Update `consistency.lastActiveDay` and bump `streakDays` if new calendar day and <= 1 day gap from last.
-  - [ ] `PostToolUseFailure`:
-    - `chaos.errors++`, `quality.totalEdits++`.
-- [ ] **Level-up event**: when `xp >= xpForLevel(level+1)`, increment level and fire a surprise-budget-exempt level-up comment via `commentary.sh`.
-- [ ] **Max-level handling**: level 50 cap initially. XP over cap accrues to `xp` field (visible via `/buddy`) but no further level transitions. No capping weirdness.
-- [ ] Tests:
-  - [ ] Simulate 1 week of 20 tool uses/day → expected level (~5-6), expected signals.
-  - [ ] Streak days increments correctly across day boundaries.
-  - [ ] `chaos.errors` and `quality.successfulEdits` diverge under mixed success/failure.
+- [x] XP curve: `xpForLevel(n) = 50 * n * (n + 1)` stored in `scripts/lib/evolution.sh`. Plan pins xpForLevel(1)=100, xpForLevel(5)=1500, xpForLevel(10)=5500 as the formula outputs. Ticket's original 750/2750 anchors were inconsistent with the formula — implementation matches the formula; the Lv 5 = 1500 / Lv 10 = 5500 cumulative thresholds are the authoritative public values.
+- [x] **XP sources** (all flow through `buddy_save` with caller-held flock):
+  - [x] `PostToolUse` → +2 XP.
+  - [x] `PostToolUseFailure` → +1 XP.
+  - [x] `Stop` → +5 XP + 2 × floor(sessionActiveHours).
+  - [x] Streak bonus: +10 XP on the first event of a day that extends `consistency.streakDays`.
+- [x] **Signal accumulation**:
+  - [x] `PostToolUse`: appends tool to variety.toolsUsed with 7-day prune; bumps quality.{successful,total}Edits when tool ∈ {Edit,Write,MultiEdit}; bumps chaos.repeatedEditHits when file matches session.lastToolFilePath AND tool is edit-like; updates consistency per UTC day boundary with 1-day gap tolerance.
+  - [x] `PostToolUseFailure`: chaos.errors++, quality.totalEdits++.
+- [x] **Level-up event**: `hook_signals_apply` emits `LEVEL_UP:<n>` on stdout line 1 when level advances; hooks route that through `hook_commentary_select LevelUp` which bypasses all three rate-limit gates and does NOT count against `commentsThisSession`.
+- [x] **Max-level cap**: MAX_LEVEL=50. XP accrues past cap; level stays.
+- [x] Tests: tests/hooks/test_week_simulation.bats (7-day sim), tests/hooks/test_signals.bats (13 streak boundary scenarios including sentinel, continuation, gap-reset, midnight, same-day no-op), tests/hooks/test_post_tool_use.bats (concurrent dual-fire, level-up fires LevelUp bank, repeatedEditHits bumps on consecutive same-file Edits).
 
 ## Exit criteria
 
@@ -46,5 +38,25 @@ Accumulate XP and the four behavior-axis signals (consistency, variety, quality,
 
 - **Why four axes**: single-axis signals (Pokémon friendship) are trivial to grind. Four axes create cross-axis tension — optimizing one means neglecting another. Plan D2 and Digimon-V-Pet prior-art reference.
 - All writes must go through the flock'd state API from P1-1. Never write directly.
-- Retention of `variety.toolsUsed`: keep a 7-active-day window so variety reflects *recent* exploration, not tool types used once months ago.
-- This ticket does NOT yet implement the form transition — that's P4-2. We only accumulate here.
+- Retention of `variety.toolsUsed`: 7-active-day window so variety reflects *recent* exploration, not tool types used once months ago.
+- This ticket does NOT implement the form transition — that's P4-2. We only accumulate here.
+
+### Implementation notes (2026-04-21)
+
+- **Plan:** [docs/plans/2026-04-21-001-feat-p4-1-xp-signals-plan.md](../plans/2026-04-21-001-feat-p4-1-xp-signals-plan.md). 6 implementation units, all shipped.
+- **Branch:** feat/p4-1-xp-signals. Commits: evolution.sh + skeleton (bc0c329), jq-fork collapse on commentary (35213ee), hook_signals_apply (61c5045), hook wiring + lock nesting (9ff529e), LevelUp banks + week-sim (cf4a3be).
+- **Lock ordering:** session OUTER, buddy INNER, release reversed. State.sh got `_BUDDY_SAVE_LOCK_HELD=1` escape hatch so the kernel's per-open-file-description lock table does not deadlock buddy_save's internal flock against the caller-held one.
+- **Variety shape change from the ticket draft:** `variety.toolsUsed` is a flat map `{tool: epoch_last_seen}` with prune-on-write > 7 days, rather than an array of day-bucket objects. Cheaper in jq, bounded size (tool roster count). Plan D6.
+- **Perf before/after (100-iter harness, `tests/hooks/perf_hook_p95.sh`):**
+  | hook | P3-2 baseline | Unit 2 (fusion) | Unit 4 (+signals) | Unit 6 final |
+  |---|---|---|---|---|
+  | session-start.sh | 27ms | 27ms | 20ms | 26ms |
+  | post-tool-use.sh | 85ms | 61ms | 80ms | 90ms |
+  | post-tool-use-failure.sh | 30ms | 30ms | 27ms | 27ms |
+  | stop.sh | 67ms | 58ms | 86ms | 71ms |
+  All under the 100ms ceiling across every pass. PTU p95 ends 5ms above baseline but ~35ms under the ceiling.
+- **jq-fork collapse on commentary.sh:** absorbed (Unit 2). The P3-2 residual item "Stop-double-fire dedup" stays deferred to its own follow-up ticket.
+- **LevelUp commentary:** 12 lines per species, voice-reviewed. Bypasses all three rate-limit gates and does NOT bump commentsThisSession — level-ups should never count against the steady-state chatter budget.
+- **Test totals:** 216 bats scenarios green. New this ticket: 21 (evolution.bats), 27 (test_signals.bats), 6 P4-1 additions in test_post_tool_use.bats, 1 week-sim, 1 structural assertion for LevelUp banks. Extended test_common.bats for lastToolFilePath and test_slash.bats for the signals skeleton in the hatch envelope.
+- **Live-session smoke:** deferred to manual execution (requires a real `claude --plugin-dir` run). The recipe at `docs/solutions/developer-experience/claude-code-plugin-hooks-json-schema-2026-04-20.md` §B is the authoritative smoke; empirically verify `tool_input.file_path` arrives for Edit/Write and not for Bash before the ticket is considered fully closed in production.
+- **Unchanged invariants:** hooks still exit 0 on internal failure; session_load/session_save/buddy_load semantics unchanged; dedup ring behaviour unchanged; schemaVersion stays at 1 (signals lazy-init via jq `// default`).

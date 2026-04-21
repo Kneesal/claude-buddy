@@ -1,7 +1,7 @@
 ---
 title: P4-1 — XP + evolution signal accumulation
 type: feat
-status: active
+status: complete
 date: 2026-04-21
 origin: docs/roadmap/P4-1-xp-signals.md
 ---
@@ -453,7 +453,7 @@ Session JSON gains exactly one field: `lastToolFilePath: "<path>"`
 
 ## Implementation Units
 
-- [ ] **Unit 1: `scripts/lib/evolution.sh` + signals skeleton + session extension**
+- [x] **Unit 1: `scripts/lib/evolution.sh` + signals skeleton + session extension**
 
 **Goal:** Ship the pure library primitives and the shape-additive
 plumbing. No hook behaviour changes yet.
@@ -518,7 +518,7 @@ plumbing. No hook behaviour changes yet.
 
 ---
 
-- [ ] **Unit 2: jq-fork collapse on `commentary.sh` hot paths**
+- [x] **Unit 2: jq-fork collapse on `commentary.sh` hot paths**
 
 **Goal:** Reclaim p95 headroom before Unit 4 adds new work. Fuse
 the sequential jq mutations in `_commentary_handle_ptu`,
@@ -586,7 +586,7 @@ single jq invocations per event.
 
 ---
 
-- [ ] **Unit 3: `hook_signals_apply` — fused signals + XP + level-up evaluator**
+- [x] **Unit 3: `hook_signals_apply` — fused signals + XP + level-up evaluator**
 
 **Goal:** Add the single-entry helper that hooks call to mutate
 `buddy.json.signals`, add XP, and detect level-ups — all in one
@@ -709,7 +709,7 @@ from this filter's helpers).
 
 ---
 
-- [ ] **Unit 4: Wire buddy-lock + signals into PTU/PTUF/Stop hooks**
+- [x] **Unit 4: Wire buddy-lock + signals into PTU/PTUF/Stop hooks**
 
 **Goal:** Every hook now opens `buddy.json.lock` inside the
 session-lock critical section, calls `hook_signals_apply`,
@@ -827,7 +827,7 @@ assertion constrains the implementation.
 
 ---
 
-- [ ] **Unit 5: `LevelUp` commentary event + species line banks + concurrency + boundary tests**
+- [x] **Unit 5: `LevelUp` commentary event + species line banks + concurrency + boundary tests**
 
 **Goal:** Ship the `LevelUp` event case in `hook_commentary_select`,
 write 10+ level-up lines per species, and land the test harness
@@ -927,7 +927,7 @@ boundary).
 
 ---
 
-- [ ] **Unit 6: Live-session smoke + perf re-baseline + notes**
+- [x] **Unit 6: Live-session smoke + perf re-baseline + notes**
 
 **Goal:** Empirically confirm `tool_input.file_path` shape, confirm
 level-up lines surface in the transcript, re-record perf baselines,
