@@ -193,6 +193,20 @@ setup() {
   [[ "$started" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
 }
 
+@test "hook_initial_session_json: P3-2 commentary fields present" {
+  run hook_initial_session_json "sess-p32"
+  [ "$status" -eq 0 ]
+  # lastEventType starts null; commentsThisSession starts 0.
+  [ "$(echo "$output" | jq -r '.lastEventType')" = "null" ]
+  [ "$(echo "$output" | jq -r '.commentsThisSession')" = "0" ]
+  # recentFailures is an empty array.
+  [ "$(echo "$output" | jq -r '.recentFailures | type')" = "array" ]
+  [ "$(echo "$output" | jq -r '.recentFailures | length')" = "0" ]
+  # commentary.bags is an empty object; firstEditFired starts false.
+  [ "$(echo "$output" | jq -r '.commentary.bags | type')" = "object" ]
+  [ "$(echo "$output" | jq -r '.commentary.firstEditFired')" = "false" ]
+}
+
 # ------------------------------------------------------------
 # hook_ring_push + hook_ring_contains
 # ------------------------------------------------------------

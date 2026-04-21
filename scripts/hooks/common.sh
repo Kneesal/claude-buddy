@@ -151,17 +151,28 @@ hook_extract_tool_use_id() {
 # Used by SessionStart (primary init) and by other hooks that find a
 # missing session file (defensive re-init per D3 of the P3-1 plan).
 #
-# The shape:
+# The shape (P3-2):
 #   {
 #     "schemaVersion": 1,
 #     "sessionId": "<id>",
 #     "startedAt": "<ISO-8601 UTC>",
 #     "cooldowns": {},
-#     "recentToolCallIds": []
+#     "recentToolCallIds": [],
+#     "lastEventType": null,
+#     "commentsThisSession": 0,
+#     "recentFailures": [],
+#     "commentary": {
+#       "bags": {},
+#       "firstEditFired": false
+#     }
 #   }
 #
 # schemaVersion is stamped here (not in session_save) because session
 # files are the property of the hook layer; P3-1 owns their shape.
+# The commentary/rate-limit fields are additive — older session files
+# (pre-P3-2) that round-trip through session_load → modify → session_save
+# pick up the new fields lazily via jq `// default` reads in
+# commentary.sh, so mid-session plugin upgrades don't need a migration.
 hook_initial_session_json() {
   local session_id="$1"
   local started_at
@@ -174,7 +185,14 @@ hook_initial_session_json() {
       sessionId: $sid,
       startedAt: $ts,
       cooldowns: {},
-      recentToolCallIds: []
+      recentToolCallIds: [],
+      lastEventType: null,
+      commentsThisSession: 0,
+      recentFailures: [],
+      commentary: {
+        bags: {},
+        firstEditFired: false
+      }
     }'
 }
 

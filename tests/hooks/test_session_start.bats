@@ -36,6 +36,18 @@ _count_session_files() {
   [ "$sid" = "sess-one" ]
   [ "$cd_type" = "object" ]
   [ "$ring_type" = "array" ]
+  # P3-2 commentary fields are part of the canonical shape.
+  local last comm_count rf_type bags_type fef
+  last="$(jq -r '.lastEventType' "$CLAUDE_PLUGIN_DATA/session-sess-one.json")"
+  comm_count="$(jq -r '.commentsThisSession' "$CLAUDE_PLUGIN_DATA/session-sess-one.json")"
+  rf_type="$(jq -r '.recentFailures | type' "$CLAUDE_PLUGIN_DATA/session-sess-one.json")"
+  bags_type="$(jq -r '.commentary.bags | type' "$CLAUDE_PLUGIN_DATA/session-sess-one.json")"
+  fef="$(jq -r '.commentary.firstEditFired' "$CLAUDE_PLUGIN_DATA/session-sess-one.json")"
+  [ "$last" = "null" ]
+  [ "$comm_count" = "0" ]
+  [ "$rf_type" = "array" ]
+  [ "$bags_type" = "object" ]
+  [ "$fef" = "false" ]
 }
 
 @test "session-start: re-init overwrites stale state" {
