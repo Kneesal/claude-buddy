@@ -26,11 +26,13 @@ _ring() {
 # Happy path
 # ------------------------------------------------------------
 
-@test "post-tool-use: ACTIVE + fresh session creates ring with first id" {
+@test "post-tool-use: ACTIVE + fresh session creates ring and emits first_edit" {
   _seed_hatch 42
   run _fire "sess-a" "tu_1"
   [ "$status" -eq 0 ]
-  [ -z "$output" ]
+  # First PTU of the session emits a first_edit-bank line (P3-2).
+  [ -n "$output" ]
+  [[ "$output" =~ :\ \".+\"$ ]]
   [ -f "$CLAUDE_PLUGIN_DATA/session-sess-a.json" ]
   run _ring "sess-a"
   [ "$output" = '["tu_1"]' ]
@@ -170,4 +172,48 @@ _ring() {
   [ "$status" -eq 0 ]
   run jq -rc '.recentToolCallIds' "$CLAUDE_PLUGIN_DATA/session-sess-l.json"
   [ "$output" = '["tc_1"]' ]
+}
+
+# ------------------------------------------------------------
+# Commentary wiring (P3-2)
+# ------------------------------------------------------------
+
+@test "post-tool-use: novelty gate silences the second consecutive emit" {
+  _seed_hatch 42
+  # First fire emits.
+  run _fire "sess-nv" "tu_1"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  # Second fire same event type → silenced, budget unchanged.
+  run _fire "sess-nv" "tu_2"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run jq -r '.commentsThisSession' "$CLAUDE_PLUGIN_DATA/session-sess-nv.json"
+  [ "$output" = "1" ]
+}
+
+@test "post-tool-use: burst 100 fires in 1 second yields ≤3 emits" {
+  _seed_hatch 42
+  # Precondition match: exit criterion from the ticket. 100 tool uses
+  # in <60s must produce ≤3 comments. We run 100 fires back-to-back
+  # with unique IDs so dedup doesn't mask the rate-limit behavior.
+  local emits=0 i
+  for i in $(seq 1 100); do
+    local line
+    line="$(_fire "sess-burst" "tu_$i")"
+    [[ -n "$line" ]] && emits=$((emits + 1))
+  done
+  # Cooldown math: fire 1 immediate, fire 2 blocked (<5min), so even
+  # 100 fires within seconds should produce exactly 1. The ≤3 ticket
+  # target is an upper bound.
+  [ "$emits" -le 3 ]
+  # And the ring still holds 20, not 100.
+  run jq -r '.recentToolCallIds | length' "$CLAUDE_PLUGIN_DATA/session-sess-burst.json"
+  [ "$output" = "20" ]
+}
+
+@test "post-tool-use: NO_BUDDY suppresses commentary too" {
+  run _fire "sess-nb" "tu_1"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }

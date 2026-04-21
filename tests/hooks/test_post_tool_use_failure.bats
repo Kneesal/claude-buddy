@@ -18,11 +18,13 @@ _fire() {
 # Happy path — identical shape to PostToolUse
 # ------------------------------------------------------------
 
-@test "failure: ACTIVE + valid payload pushes id" {
+@test "failure: ACTIVE + valid payload pushes id and emits commentary" {
   _seed_hatch 42
   run _fire "$FAIL_SH" "sess-f" "tu_1"
   [ "$status" -eq 0 ]
-  [ -z "$output" ]
+  # P3-2: first failure emits a default-bank line.
+  [ -n "$output" ]
+  [[ "$output" =~ :\ \".+\"$ ]]
   run jq -rc '.recentToolCallIds' "$CLAUDE_PLUGIN_DATA/session-sess-f.json"
   [ "$output" = '["tu_1"]' ]
 }
