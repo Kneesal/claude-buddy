@@ -1,7 +1,7 @@
 ---
 title: Speed up the bats suite — tiered layout + parallel execution + setup-cost reduction
 type: perf
-status: active
+status: complete
 date: 2026-04-22
 ---
 
@@ -272,7 +272,7 @@ directories is the least ambiguous.
 
 ## Implementation Units
 
-- [ ] **Unit 1: Baseline measurement + parallel-jobs spike**
+- [x] **Unit 1: Baseline measurement + parallel-jobs spike**
 
 **Goal:** Establish a shared measurement baseline, then empirically
 validate that `--jobs N` yields a meaningful speed-up with no new
@@ -302,7 +302,7 @@ failures.
 
 ---
 
-- [ ] **Unit 2: `tests/run-quick.sh` + `tests/run-all.sh` wrappers**
+- [x] **Unit 2: `tests/run-quick.sh` + `tests/run-all.sh` wrappers**
 
 **Goal:** Give the user two one-shot commands for the two common
 cases without needing to remember flags.
@@ -362,7 +362,7 @@ readers don't re-attempt the function-hoist path.
 
 ---
 
-- [ ] **Unit 4: Cache hatched-buddy JSON via `setup_file`**
+- [x] **Unit 4: Cache hatched-buddy JSON via `setup_file`**
 
 **Goal:** Test files that need an ACTIVE buddy state should hatch
 **once per file**, not once per test.
@@ -397,7 +397,7 @@ readers don't re-attempt the function-hoist path.
 
 ---
 
-- [ ] **Unit 5: Physical tier split into `tests/unit/` and
+- [x] **Unit 5: Physical tier split into `tests/unit/` and
   `tests/integration/`**
 
 **Goal:** Directory-level separation so `run-quick.sh` can target
@@ -442,7 +442,7 @@ Unit 3 + Unit 4 (the savings are real).
 
 ---
 
-- [ ] **Unit 6: Flake audit + per-file opt-out documentation**
+- [x] **Unit 6: Flake audit + per-file opt-out documentation**
 
 **Goal:** Catch any parallelism-induced flake and document the
 opt-out mechanism for future tests that can't share the devcontainer
