@@ -36,3 +36,8 @@ tests/bats-core/
 # Test output
 coverage/
 tests/output/
+
+# Live-session smoke artifacts (generated locally by .smoke-run.sh;
+# contain payload captures and machine paths not meant for the repo)
+.smoke/
+.smoke-run.sh

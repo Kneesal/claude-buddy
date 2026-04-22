@@ -223,34 +223,3 @@ hook_ring_update() {
   '
 }
 
-# Raw ring-push without the dedup short-circuit. Kept for test isolation
-# and for callers that have already performed their own membership check.
-# Duplicate IDs are MOVED to the tail (remove-then-append); if "no-op on
-# duplicate" is the intent, use hook_ring_update or gate this call behind
-# hook_ring_contains.
-hook_ring_push() {
-  local id="$1"
-  jq --arg id "$id" --argjson max "$HOOK_RING_MAX" '
-    .recentToolCallIds = (
-      ((.recentToolCallIds // []) | map(select(. != $id))) + [$id]
-      | .[-($max):]
-    )
-  '
-}
-
-# Return 0 if the given tool-call ID is already present in the session
-# JSON's recentToolCallIds array; 1 otherwise.
-#
-# Usage:
-#   if hook_ring_contains "$session_json" "$id"; then
-#     # dedup — skip further work
-#   fi
-hook_ring_contains() {
-  local session_json="$1"
-  local id="$2"
-  local hit
-  hit="$(printf '%s' "$session_json" | jq -r --arg id "$id" '
-    (.recentToolCallIds // []) | any(. == $id)
-  ' 2>/dev/null)"
-  [[ "$hit" == "true" ]]
-}

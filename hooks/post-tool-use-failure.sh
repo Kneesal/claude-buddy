@@ -136,19 +136,17 @@ _main() {
   esac
 
   # --- Event inputs (failures: no toolName, no file-path work) ---
-  local now today today_epoch
+  local now today
   now="$(date +%s 2>/dev/null || echo 0)"
   today="$(date -u +%Y-%m-%d 2>/dev/null || echo "1970-01-01")"
-  today_epoch="$(date -u -d "$today" +%s 2>/dev/null || echo 0)"
 
   local inputs_json
   inputs_json="$(jq -n -c \
     --argjson now "$now" \
-    --arg today "$today" \
-    --argjson todayEpoch "$today_epoch" '
+    --arg today "$today" '
     { toolName: "", filePath: "",
       filePathMatchedLast: false, isEditTool: false,
-      now: $now, today: $today, todayEpoch: $todayEpoch,
+      now: $now, today: $today,
       sessionActiveHours: 0 }' 2>/dev/null)"
 
   local signals_out level_up_sentinel buddy_after

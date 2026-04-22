@@ -140,23 +140,26 @@ _main() {
     # (integer) into signals.sh — the filter does another floor()
     # internally but integer input is a no-op there.
     hours_str=$(( (now - started_epoch) / 3600 ))
+    # Clamp non-negative: NTP correction or manual clock rewind between
+    # SessionStart and Stop can yield a negative delta, which would
+    # subtract XP via the filter's `$xp_stop_hr * ($hrs | floor)` term.
+    # Pure-growth progression (brainstorm R6) forbids XP decrement.
+    (( hours_str < 0 )) && hours_str=0
   else
     hours_str=0
   fi
 
-  local today today_epoch
+  local today
   today="$(date -u +%Y-%m-%d 2>/dev/null || echo "1970-01-01")"
-  today_epoch="$(date -u -d "$today" +%s 2>/dev/null || echo 0)"
 
   local inputs_json
   inputs_json="$(jq -n -c \
     --argjson now "$now" \
     --arg today "$today" \
-    --argjson todayEpoch "$today_epoch" \
     --argjson hours "$hours_str" '
     { toolName: "", filePath: "",
       filePathMatchedLast: false, isEditTool: false,
-      now: $now, today: $today, todayEpoch: $todayEpoch,
+      now: $now, today: $today,
       sessionActiveHours: $hours }' 2>/dev/null)"
 
   local signals_out level_up_sentinel buddy_after

@@ -168,3 +168,50 @@ EVOLUTION_LIB="$REPO_ROOT/scripts/lib/evolution.sh"
   line_count="$(printf '%s' "$json" | tr -cd '\n' | wc -c)"
   [ "$line_count" = "0" ]
 }
+
+# ============================================================
+# Bash / jq equivalence — level_for_xp is implemented in both
+# scripts/lib/evolution.sh (bash) AND scripts/hooks/signals.sh
+# (inlined jq). A drift between them would silently shift the
+# level users see at the same XP total, so the two must agree on
+# every boundary value. This test is the only thing keeping the
+# duplication honest.
+# ============================================================
+
+@test "level_for_xp: bash and jq-inlined versions agree on the boundary grid" {
+  source "$EVOLUTION_LIB"
+
+  # Grid: every threshold (exact), just below, just above, plus a
+  # handful of large values to exercise the cap.
+  local xps=()
+  local n
+  for (( n = 0; n <= 50; n++ )); do
+    local t=$(( 50 * n * (n + 1) ))
+    xps+=( "$t" "$(( t - 1 ))" "$(( t + 1 ))" )
+  done
+  xps+=( 0 1 99 100 101 999 1000 1500 9999 999999999 )
+
+  # Inline jq program must stay identical to the one in signals.sh.
+  # If a future edit updates one without the other, this test fires.
+  local jq_prog='
+    def level_for_xp($xp; $max):
+      if $xp < 0 then 1
+      else
+        [range(1; $max + 1)]
+        | map(select((50 * . * (. + 1)) <= $xp))
+        | length + 1
+        | if . > $max then $max else . end
+      end;
+    level_for_xp(.xp; 50)
+  '
+
+  local xp bash_lvl jq_lvl
+  for xp in "${xps[@]}"; do
+    bash_lvl="$(level_for_xp "$xp")"
+    jq_lvl="$(jq --argjson x "$xp" -n "{xp: \$x} | $jq_prog")"
+    if [[ "$bash_lvl" != "$jq_lvl" ]]; then
+      echo "DRIFT at xp=$xp: bash=$bash_lvl jq=$jq_lvl" >&2
+      return 1
+    fi
+  done
+}

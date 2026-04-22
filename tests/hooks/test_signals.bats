@@ -179,6 +179,21 @@ _invoke_signals() {
   [ "$(echo "$buddy_out" | jq -r '.buddy.xp')" = "11" ]
 }
 
+@test "PTUF: same-day fire pays +1 XP alone, no streak bonus" {
+  # Isolates the PTUF XP delta from the streak bonus so a regression
+  # that misapplies +10 to same-day PTUF would fail this test but pass
+  # the first-of-day variant above.
+  local sig buddy inputs out
+  sig='{"consistency":{"streakDays":2,"lastActiveDay":"2026-04-21"},"variety":{"toolsUsed":{}},"quality":{"successfulEdits":0,"totalEdits":0},"chaos":{"errors":0,"repeatedEditHits":0}}'
+  buddy="$(_mk_buddy 0 1 "$sig")"
+  inputs="$(_mk_inputs today=2026-04-21 todayEpoch=1745193600)"
+  out="$(_invoke_signals PostToolUseFailure "$buddy" "$inputs")"
+  _split_signals_out "$out"
+  [ "$(echo "$buddy_out" | jq -r '.buddy.xp')" = "1" ]
+  [ "$(echo "$buddy_out" | jq -r '.buddy.signals.consistency.streakDays')" = "2" ]
+  [ "$(echo "$buddy_out" | jq -r '.buddy.signals.chaos.errors')" = "1" ]
+}
+
 # -------------------------------------------------------------------
 # Stop — base + per-hour XP
 # -------------------------------------------------------------------
@@ -267,6 +282,29 @@ _invoke_signals() {
   [ "$(echo "$buddy_out" | jq -r '.buddy.signals.consistency.streakDays')" = "1" ]
   [ "$(echo "$buddy_out" | jq -r '.buddy.signals.consistency.lastActiveDay')" = "2026-04-21" ]
   [ "$(echo "$buddy_out" | jq -r '.buddy.xp')" = "12" ]
+}
+
+@test "Streak: crossing midnight UTC within the same real session advances the streak" {
+  # Two consecutive fires with today strings on adjacent calendar days
+  # (what the hook derives from `date -u +%Y-%m-%d`). Proves the day
+  # boundary is UTC-coherent end-to-end, not just inside the filter.
+  local buddy inputs_day1 out1 buddy_mid inputs_day2 out2
+  buddy="$(_mk_buddy 0 1)"
+  inputs_day1="$(_mk_inputs today=2026-04-21)"
+  out1="$(_invoke_signals PostToolUse "$buddy" "$inputs_day1")"
+  _split_signals_out "$out1"
+  buddy_mid="$buddy_out"
+  [ "$(echo "$buddy_mid" | jq -r '.buddy.signals.consistency.streakDays')" = "1" ]
+
+  # Second fire is the very next UTC day.
+  inputs_day2="$(_mk_inputs today=2026-04-22)"
+  out2="$(_invoke_signals PostToolUse "$buddy_mid" "$inputs_day2")"
+  _split_signals_out "$out2"
+  [ "$(echo "$buddy_out" | jq -r '.buddy.signals.consistency.streakDays')" = "2" ]
+  [ "$(echo "$buddy_out" | jq -r '.buddy.signals.consistency.lastActiveDay')" = "2026-04-22" ]
+  # First fire: 0 + 2 PTU + 10 streak = 12.
+  # Second fire: 12 + 2 PTU + 10 streak (day advance) = 24.
+  [ "$(echo "$buddy_out" | jq -r '.buddy.xp')" = "24" ]
 }
 
 # -------------------------------------------------------------------

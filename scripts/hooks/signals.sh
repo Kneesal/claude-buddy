@@ -30,9 +30,11 @@
 #     "isEditTool":          true | false,   # caller's Edit/Write/MultiEdit check
 #     "now":                 1745270100,     # epoch-seconds
 #     "today":               "2026-04-21",   # UTC YYYY-MM-DD
-#     "todayEpoch":          1745193600,     # epoch-seconds at UTC 00:00:00
 #     "sessionActiveHours":  1.5             # float, Stop only; else 0
 #   }
+#
+# The filter parses `today` via jq strptime/mktime under TZ=UTC to derive
+# its own day-boundary epoch — callers do NOT need to pre-compute it.
 #
 # Event types: "PostToolUse" | "PostToolUseFailure" | "Stop" |
 #              "LevelUp"  (reserved; no-op — level-up events are
@@ -165,7 +167,12 @@ hook_signals_apply() {
 
     # --- Streak logic (D7) ---
     ($sig.consistency.lastActiveDay // "1970-01-01") as $lad |
-    ($in.today // "") as $today |
+    # An empty or missing `today` is a caller-programming error. If we
+    # propagated it through, lastActiveDay would be set to "" on the
+    # write below, and the subsequent sentinel guard ("1970-01-01"
+    # reset branch) would no longer match the unset state. Preserve
+    # the prior lastActiveDay + skip the bonus instead.
+    (if ($in.today // "") == "" then $lad else $in.today end) as $today |
     # Parse both ISO dates via strptime/mktime. TZ=UTC env ensures
     # UTC-coherent epoch conversion. Invalid dates → 0 → "reset" branch.
     ($lad   | try (strptime("%Y-%m-%d") | mktime) catch 0) as $lad_ep |

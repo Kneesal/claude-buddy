@@ -89,9 +89,18 @@ _main() {
   # as an object with tool-specific keys. Edit/Write/MultiEdit put
   # the path at tool_input.file_path. Non-edit tools (Bash, Grep,
   # Glob, ...) don't carry a file_path and we treat it as empty.
-  local tool_name tool_file
-  tool_name="$(printf '%s' "$payload" | jq -r '.tool_name // ""' 2>/dev/null)"
-  tool_file="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+  #
+  # Single jq that emits tool_name\ntool_input.file_path on two lines —
+  # saves one fork vs two sequential extractions. Values are sanitized
+  # (control bytes stripped via gsub) so they can't poison the newline
+  # split even under a hostile payload.
+  local tool_name tool_file payload_fields
+  payload_fields="$(printf '%s' "$payload" | jq -r '
+    ((.tool_name // "") | gsub("[\r\n]"; " ")) + "\n" +
+    ((.tool_input.file_path // "") | gsub("[\r\n]"; " "))
+  ' 2>/dev/null)"
+  tool_name="${payload_fields%%$'\n'*}"
+  tool_file="${payload_fields#*$'\n'}"
 
   # --- Outer critical section: per-session flock ---
   local data_dir="${CLAUDE_PLUGIN_DATA:-}"
@@ -182,10 +191,9 @@ _main() {
   local is_edit="false"
   _ptu_is_edit_tool "$tool_name" && is_edit="true"
 
-  local now today today_epoch
+  local now today
   now="$(date +%s 2>/dev/null || echo 0)"
   today="$(date -u +%Y-%m-%d 2>/dev/null || echo "1970-01-01")"
-  today_epoch="$(date -u -d "$today" +%s 2>/dev/null || echo 0)"
 
   local inputs_json
   inputs_json="$(jq -n -c \
@@ -194,11 +202,10 @@ _main() {
     --argjson matched "$matched" \
     --argjson isEdit "$is_edit" \
     --argjson now "$now" \
-    --arg today "$today" \
-    --argjson todayEpoch "$today_epoch" '
+    --arg today "$today" '
     { toolName: $tool, filePath: $file,
       filePathMatchedLast: $matched, isEditTool: $isEdit,
-      now: $now, today: $today, todayEpoch: $todayEpoch,
+      now: $now, today: $today,
       sessionActiveHours: 0 }' 2>/dev/null)"
 
   # --- Run signals + XP + level-up ---
