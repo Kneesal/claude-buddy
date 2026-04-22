@@ -40,9 +40,46 @@ teardown() {
 # Seed a deterministic first hatch. With BUDDY_RNG_SEED=42 the roll pins to a
 # Common axolotl named Custard (pinned in tests/rng.bats and referenced by
 # seed-determinism assertions in tests/slash.bats and tests/statusline.bats).
+#
+# For non-default seeds, always re-runs hatch.sh (no caching since the
+# output depends on the seed). For the default seed (42), prefers the
+# per-file cache written by `_prepare_hatched_cache` (see below) —
+# this cuts ~80-100 ms per call (5 jq forks in roll_buddy) and adds up
+# fast across a 70+ call-site suite.
 _seed_hatch() {
   local seed="${1:-42}"
+  if [[ "$seed" == "42" \
+        && -n "${BATS_FILE_TMPDIR:-}" \
+        && -f "$BATS_FILE_TMPDIR/seed42-hatched.json" ]]; then
+    cp "$BATS_FILE_TMPDIR/seed42-hatched.json" "$CLAUDE_PLUGIN_DATA/buddy.json"
+    # buddy_save opens (and thus creates) buddy.json.lock as part of
+    # its flock dance. Replicate that here so tests that assert on the
+    # lock file's existence (e.g., reset state_cleanup_orphans
+    # preservation check) don't fail under the cache path.
+    : > "$CLAUDE_PLUGIN_DATA/buddy.json.lock"
+    return 0
+  fi
   BUDDY_RNG_SEED="$seed" bash "$HATCH_SH" >/dev/null
+}
+
+# Pre-compute a hatched buddy envelope at seed 42 and stash it under
+# $BATS_FILE_TMPDIR so every `_seed_hatch` call in the file can `cp`
+# instead of re-running the RNG. Call from a file's `setup_file()`:
+#
+#   setup_file() {
+#     export BATS_FILE_TMPDIR  # exposed to per-test setup
+#     _prepare_hatched_cache
+#   }
+#
+# The function is idempotent — a second call within the same file
+# short-circuits.
+_prepare_hatched_cache() {
+  local cache="$BATS_FILE_TMPDIR/seed42-hatched.json"
+  [[ -f "$cache" ]] && return 0
+  local scratch="$BATS_FILE_TMPDIR/hatch-scratch"
+  mkdir -p "$scratch"
+  CLAUDE_PLUGIN_DATA="$scratch" BUDDY_RNG_SEED=42 bash "$HATCH_SH" >/dev/null
+  cp "$scratch/buddy.json" "$cache"
 }
 
 _seed_corrupt() {

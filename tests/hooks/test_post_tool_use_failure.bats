@@ -4,6 +4,11 @@ bats_require_minimum_version 1.5.0
 
 load ../test_helper
 
+# Pre-compute seed-42 hatch once per file (see test_helper.bash).
+setup_file() {
+  _prepare_hatched_cache
+}
+
 POST_SH="$REPO_ROOT/hooks/post-tool-use.sh"
 FAIL_SH="$REPO_ROOT/hooks/post-tool-use-failure.sh"
 

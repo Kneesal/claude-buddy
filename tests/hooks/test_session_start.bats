@@ -4,6 +4,11 @@ bats_require_minimum_version 1.5.0
 
 load ../test_helper
 
+# Pre-compute seed-42 hatch once per file (see test_helper.bash).
+setup_file() {
+  _prepare_hatched_cache
+}
+
 SESSION_START_SH="$REPO_ROOT/hooks/session-start.sh"
 
 # Helper: emit a well-formed SessionStart payload.
