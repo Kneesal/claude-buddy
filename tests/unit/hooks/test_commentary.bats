@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load ../test_helper
+load ../../test_helper
 
 COMMENTARY_SH="$REPO_ROOT/scripts/hooks/commentary.sh"
 COMMON_SH="$REPO_ROOT/scripts/hooks/common.sh"

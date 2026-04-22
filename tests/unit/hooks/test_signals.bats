@@ -8,7 +8,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load ../test_helper
+load ../../test_helper
 
 SIGNALS_LIB="$REPO_ROOT/scripts/hooks/signals.sh"
 EVOLUTION_LIB="$REPO_ROOT/scripts/lib/evolution.sh"

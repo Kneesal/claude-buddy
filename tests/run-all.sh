@@ -34,4 +34,9 @@ fi
 # see tests/.perf-baseline.md). User-supplied --jobs wins because it
 # appears later on the bats command line.
 cd "$REPO_ROOT"
-exec "$BATS_BIN" --jobs 4 --timing "$@" tests/
+# Pass both tier directories explicitly — bats recurses one level
+# into a directory arg, so tests/unit/ finds tests/unit/hooks/ too,
+# but tests/ alone would only find direct children (none now that
+# the tier split has moved everything down). tests/bats-core/ is
+# excluded by construction since it's not listed.
+exec "$BATS_BIN" --jobs 4 --timing "$@" tests/unit/ tests/integration/

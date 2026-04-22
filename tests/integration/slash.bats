@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load test_helper
+load ../test_helper
 
 # Pre-compute the seed-42 hatch once per file so every `_seed_hatch`
 # call in the test body copies the cached JSON instead of re-running

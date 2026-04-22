@@ -9,7 +9,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load test_helper
+load ../test_helper
 
 EVOLUTION_LIB="$REPO_ROOT/scripts/lib/evolution.sh"
 

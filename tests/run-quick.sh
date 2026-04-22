@@ -34,17 +34,9 @@ if ! command -v parallel >/dev/null 2>&1; then
   exit 2
 fi
 
-# Explicit unit-tier file list. Each file either sources a library
-# directly (pure-function assertions) or asserts structural shape of
-# JSON fixtures — no subprocess spawns.
-UNIT_FILES=(
-  tests/evolution.bats
-  tests/rng.bats
-  tests/species_line_banks.bats
-  tests/hooks/test_common.bats
-  tests/hooks/test_commentary.bats
-  tests/hooks/test_signals.bats
-)
-
 cd "$REPO_ROOT"
-exec "$BATS_BIN" --jobs 4 --timing "$@" "${UNIT_FILES[@]}"
+# tests/unit/ is the tier directory — every .bats file under it is
+# either a pure-library assertion (evolution.sh, rng.sh, signals.sh,
+# commentary.sh, common.sh) or a structural-shape check (species
+# JSON). No subprocess spawns for hook/slash/statusline scripts.
+exec "$BATS_BIN" --jobs 4 --timing "$@" tests/unit/
