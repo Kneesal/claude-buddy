@@ -91,11 +91,20 @@ _validate() {
     echo "bake-sprites: $name exceeded 10 lines ($nlines)" >&2
     return 1
   fi
+  # Reject whitespace-only sprites — a fully-transparent source PNG produces
+  # N rows of spaces that pass every other check but render as an invisible
+  # buddy because render.sh sees length > 0 and skips the emoji fallback.
+  # Surfaced by ce:review 20260423-233451 adversarial finding ADV-P4-4-01.
+  if [[ -z "${content//[$' \t\n']/}" ]]; then
+    echo "bake-sprites: $name is whitespace-only — source PNG is probably fully transparent" >&2
+    return 1
+  fi
   if printf '%s' "$content" | grep -q $'\x1b'; then
     echo "bake-sprites: $name contains ANSI escapes post-strip — check chafa flags" >&2
     return 1
   fi
-  if printf '%s' "$content" | grep -Pq '[\t\r]'; then
+  # LC_ALL=C + byte-class regex is BSD-grep-safe (no grep -P requirement).
+  if printf '%s' "$content" | LC_ALL=C grep -q $'[\t\r]'; then
     echo "bake-sprites: $name contains tab or CR — sanitize the source PNG" >&2
     return 1
   fi
@@ -129,7 +138,10 @@ _write_back() {
   local base_json
   base_json="$(printf '%s\n' "$content" | jq -R -s 'split("\n") | map(select(length > 0))')"
   local tmp
-  tmp="$(mktemp "$json.XXXXXX")"
+  tmp="$(mktemp "$json.XXXXXX")" || {
+    echo "bake-sprites: mktemp failed for $json" >&2
+    return 1
+  }
   if ! jq --argjson sprite "$base_json" '.sprite.base = $sprite' "$json" > "$tmp"; then
     rm -f "$tmp"
     echo "bake-sprites: jq failed updating $json" >&2

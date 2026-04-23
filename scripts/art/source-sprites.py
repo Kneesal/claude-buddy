@@ -13,8 +13,15 @@ Unicode sextant strings and writes back into `scripts/species/*.json`.
 """
 from __future__ import annotations
 
+import argparse
+import sys
 from pathlib import Path
+from typing import Tuple
+
 from PIL import Image, ImageDraw
+
+Color = Tuple[int, int, int, int]
+Box = Tuple[int, int, int, int]
 
 CANVAS = 64
 ASSETS = Path(__file__).resolve().parent.parent.parent / "assets" / "species"
@@ -25,19 +32,15 @@ def new_canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
     return img, ImageDraw.Draw(img)
 
 
-def filled_oval(d, box, fill, outline=None):
-    d.ellipse(box, fill=fill, outline=outline)
-
-
-def rect(d, box, fill, outline=None):
+def rect(d: ImageDraw.ImageDraw, box: Box, fill: Color, outline: Color | None = None) -> None:
     d.rectangle(box, fill=fill, outline=outline)
 
 
-def pixel(d, x, y, fill):
+def pixel(d: ImageDraw.ImageDraw, x: int, y: int, fill: Color) -> None:
     d.rectangle((x, y, x, y), fill=fill)
 
 
-def dot(d, cx, cy, r, fill):
+def dot(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int, fill: Color) -> None:
     d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill)
 
 
@@ -50,14 +53,11 @@ def draw_axolotl() -> Image.Image:
     shade = (0xD9, 0x7E, 0xA0, 255)    # darker pink
     gill = (0xFF, 0xCC, 0xE0, 255)     # frilly pink
     outline = (0x5E, 0x2A, 0x3B, 255)
-    eye_w = (255, 255, 255, 255)
-    eye_d = outline
     blush = (0xFF, 0x90, 0xB8, 255)
 
     # Frilly gill tufts (three on each side) — drawn first so the head sits on top
     for cx in (6, 12, 18):
         dot(d, cx, 22, 4, gill)
-        dot(d, cx, 22, 4, outline if False else None)
     for cx in (46, 52, 58):
         dot(d, cx, 22, 4, gill)
     # Gill outline pass
@@ -281,14 +281,36 @@ SPECIES = {
 }
 
 
-def main():
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Deterministic kawaii-portrait generator for claude-buddy. "
+            "Writes one PNG per species to assets/species/. Contributor-time tool "
+            "only — end users never run this."
+        )
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Run every drawer but do not write PNGs (smoke-test). Exits 1 on any drawer error.",
+    )
+    args = parser.parse_args(argv)
+
     ASSETS.mkdir(parents=True, exist_ok=True)
-    for name, drawer in SPECIES.items():
+    # Sorted so output order is deterministic across Python implementations.
+    for name, drawer in sorted(SPECIES.items()):
         img = drawer()
+        if img.size != (CANVAS, CANVAS) or img.mode != "RGBA":
+            print(f"drawer {name!r} produced wrong shape: {img.size} {img.mode}", file=sys.stderr)
+            return 1
+        if args.check:
+            print(f"ok  {name}.png ({img.size[0]}x{img.size[1]})", file=sys.stderr)
+            continue
         out = ASSETS / f"{name}.png"
         img.save(out, format="PNG", optimize=True)
-        print(f"wrote {out} ({img.size[0]}x{img.size[1]})")
+        print(f"wrote {out} ({img.size[0]}x{img.size[1]})", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

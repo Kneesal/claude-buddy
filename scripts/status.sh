@@ -133,12 +133,15 @@ _status_render_active() {
       "XP" "$xp_bar" "$xp" "$xp_ceiling" "$next_level" "$xp_delta"
   fi
 
-  # Rarity stat bars. Max rarity stat is 10 per species schema.
-  render_stat_line "debugging" "$debugging" 10 20; printf '\n'
-  render_stat_line "patience"  "$patience"  10 20; printf '\n'
-  render_stat_line "chaos"     "$chaos"     10 20; printf '\n'
-  render_stat_line "wisdom"    "$wisdom"    10 20; printf '\n'
-  render_stat_line "snark"     "$snark"     10 20; printf '\n'
+  # Rarity stat bars. rng.sh clamps rarity stats to [0, 100] (see
+  # scripts/lib/rng.sh:roll_stats — peak_hi/dump_hi/mid_hi ceiling at 100).
+  # A prior comment here claimed "max 10 per species schema" which was wrong
+  # — caught by ce:review 20260423-233451.
+  render_stat_line "debugging" "$debugging" 100 20; printf '\n'
+  render_stat_line "patience"  "$patience"  100 20; printf '\n'
+  render_stat_line "chaos"     "$chaos"     100 20; printf '\n'
+  render_stat_line "wisdom"    "$wisdom"    100 20; printf '\n'
+  render_stat_line "snark"     "$snark"     100 20; printf '\n'
 
   # Signals glyph strip.
   printf '  🔥 %s-day · 🧰 %s tools · ✓ %s/%s edits · ⚡ %s repeats · 🪙 %s\n' \
