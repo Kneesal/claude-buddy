@@ -1,5 +1,5 @@
 ---
-description: View your coding buddy's stats, level, XP progress, and token balance.
+description: View your coding buddy as a full menu — sprite, XP bar, the five rarity stat bars, the four signal counters, token balance, and pointers to related commands.
 disable-model-invocation: true
 ---
 
