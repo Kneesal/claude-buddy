@@ -293,9 +293,8 @@ JSON
   [[ "$output" == *"axolotl"* ]]
   [[ "$output" == *"Lv.1"* ]]
   [[ "$output" == *"base form"* ]]
-  # Sprite fallback box (sprite content deferred — D2)
-  [[ "$output" == *"┌"* ]]
-  [[ "$output" == *"🦎"* ]]
+  # Sprite content — seed 42 pins axolotl, so the axolotl ASCII art shows.
+  [[ "$output" == *"o v o"* ]]
   # XP bar — label and the next-level hint
   [[ "$output" == *"XP"* ]]
   [[ "$output" == *"0/100"* ]]

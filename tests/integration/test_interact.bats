@@ -27,11 +27,10 @@ setup_file() {
   [[ "$output" == *"<"* ]]
   [[ "$output" == *">"* ]]
   [[ "$output" == *"v"* ]]
-  # Placeholder voice line — bank is empty by D2/D9
+  # Placeholder voice line — Interact bank still empty (D9); only sprite content shipped.
   [[ "$output" == *"Custard looks at you curiously."* ]]
-  # Sprite fallback box
-  [[ "$output" == *"┌"* ]]
-  [[ "$output" == *"🦎"* ]]
+  # Axolotl sprite content (seed 42 pins axolotl)
+  [[ "$output" == *"o v o"* ]]
 }
 
 @test "interact: NO_COLOR=1 strips ANSI escapes" {
