@@ -237,6 +237,24 @@ EOF
   [ "$lines" -ge 4 ]
 }
 
+@test "render_name: ESC bytes in input are stripped before color wrap" {
+  # Hand-edited buddy.json could plant ESC sequences in the name field; the
+  # render layer must not emit user-controllable control bytes verbatim.
+  # The ESC (0x1b) is stripped; printable bytes from the attempted escape
+  # remain (so the user sees what was tampered) but cannot drive the terminal.
+  out="$(render_name $'mal\x1b[31micious' rare)"
+  ! [[ "$out" == *$'\x1b[31m'* ]]
+  ! [[ "$out" == *$'\x1b[31'* ]]
+}
+
+@test "render_color (legendary): emoji input is not byte-sliced" {
+  # Per-char rainbow on a string containing a multi-byte glyph would inject
+  # ANSI escapes between the bytes of that codepoint, shredding the emoji.
+  # Detect that the emoji 🦎 (4 UTF-8 bytes) survives intact.
+  out="$(render_name "🦎" legendary)"
+  [[ "$out" == *"🦎"* ]]
+}
+
 @test "render_speech_bubble: control bytes are stripped" {
   NO_COLOR=1 run render_speech_bubble $'hello\tworld' 20
   [ "$status" -eq 0 ]

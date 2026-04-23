@@ -81,20 +81,33 @@ render_rarity_color_close() {
 # for legendary. Honors NO_COLOR.
 _render_color_line() {
   local text="$1" rarity="$2"
+  # User-controllable strings (buddy name, species, sprite lines) reach here.
+  # Strip control bytes before emit so a hand-edited buddy.json / species.json
+  # can't plant OSC escapes, clear the screen, or forge ANSI codes we didn't
+  # inject ourselves. Project pattern — see docs/solutions/developer-experience/
+  # claude-code-plugin-transcript-emit-as-trust-boundary-2026-04-21.md.
+  text="$(printf '%s' "$text" | tr -d '[:cntrl:]')"
   if [[ -n "${NO_COLOR:-}" ]]; then
     printf '%s' "$text"
     return 0
   fi
   if [[ "$rarity" == "legendary" ]]; then
     # Per-character cycle, re-seeded for shimmer.
+    #
+    # bash ${var:i:1} is byte-indexed, so walking a UTF-8 string byte-by-byte
+    # would splice ANSI escapes between the bytes of a single codepoint (shreds
+    # emoji, box-drawing glyphs, the ✨ sparkle). Detect any non-ASCII byte and
+    # fall back to a single-color wrap for the whole string in that case —
+    # still shimmers per render, still colored per rarity, without mangling
+    # the glyph stream.
+    if LC_ALL=C printf '%s' "$text" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then
+      local color
+      color="$(_render_rainbow_at $(( RANDOM % 6 )))"
+      printf '%s%s%s' "$color" "$text" "$_RENDER_RESET"
+      return 0
+    fi
     local seed=$(( RANDOM % 6 ))
     local i=0 ch
-    # Walk the string by character. We want grapheme-ish behavior — use
-    # bash parameter expansion on a unicode-aware locale-less basis: just
-    # iterate characters and let the terminal handle multi-byte glyphs.
-    # Bash ${var:i:1} is byte-indexed, which would shred UTF-8. So we
-    # enable LC_ALL=C.UTF-8 if available; otherwise fall back to the
-    # single-color path. This keeps emojis intact.
     local len=${#text}
     while (( i < len )); do
       ch="${text:$i:1}"
@@ -177,7 +190,10 @@ render_sprite_or_fallback() {
       [[ -n "$e" ]] && emoji="$e"
       if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
         # Pull lines newline-delimited and sanitize control bytes.
-        sprite_lines="$(jq -r '.sprite.base[]' "$path" 2>/dev/null | tr -d '\r' | tr -d '\t')"
+        # Each array entry arrives on its own line; preserve the \n separators
+        # here — per-line control-byte stripping happens in _render_color_line
+        # at emit time, so embedded ESC/BEL can't leak to the transcript.
+        sprite_lines="$(jq -r '.sprite.base[]' "$path" 2>/dev/null)"
       fi
     fi
   fi

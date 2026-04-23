@@ -156,6 +156,20 @@ _install_run() {
   chmod +x "$target" 2>/dev/null || true
   echo "Created $target."
 
+  # Surface any pre-existing .statusLine before we overwrite it. Backup is
+  # taken inside _install_update_settings, but the user deserves an in-band
+  # warning so a drive-by "y" doesn't silently clobber their custom segment.
+  if [[ -f "$settings" ]] && jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
+    local existing_cmd
+    existing_cmd="$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)"
+    echo ""
+    echo "Note: $settings already has a statusLine set:"
+    echo "  command = \"$existing_cmd\""
+    echo "Updating will REPLACE it (a backup will be written first). If you"
+    echo "want to keep the existing command, decline and wire the buddy block"
+    echo "into your current statusline script manually."
+    echo ""
+  fi
   if ! _install_consent "Update $settings to use this script as the statusLine?"; then
     echo "Skipped settings update. To enable manually, set"
     echo "  statusLine.command = \"$target\""

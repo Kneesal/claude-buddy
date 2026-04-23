@@ -207,6 +207,21 @@ _set_rarity() {
   [[ "$output" != *"🦎"* ]]
 }
 
+@test "statusline: path-traversal species name falls back to paw (no file read)" {
+  _seed_hatch
+  # Tamper buddy.json with a species that escapes the species dir. Without the
+  # regex guard in _buddy_line_species_emoji this would compose .../../etc.json
+  # into the file lookup.
+  local tmp
+  tmp="$(mktemp "$CLAUDE_PLUGIN_DATA/.inject.XXXXXX")"
+  jq '.buddy.species = "../../etc"' "$CLAUDE_PLUGIN_DATA/buddy.json" > "$tmp"
+  mv -f "$tmp" "$CLAUDE_PLUGIN_DATA/buddy.json"
+
+  COLUMNS=80 NO_COLOR=1 run --separate-stderr bash "$STATUSLINE_SH" </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"🐾"* ]]
+}
+
 @test "statusline: species file absent falls back to paw" {
   _seed_hatch
   local fixture="$BATS_TEST_TMPDIR/species-empty"

@@ -79,7 +79,7 @@ setup_file() {
     "PostToolUseFailure": {"default": []},
     "Stop": {"default": []},
     "LevelUp": {"default": []},
-    "Interact": {"default": ["whirrr-distinctive"]}
+    "Interact": {"default": ["whirr-distinctive-fixture-line"]}
   },
   "sprite": {"base": []}
 }
@@ -97,7 +97,10 @@ JSON
 
   BUDDY_SPECIES_DIR="$fixture_dir" NO_COLOR=1 run --separate-stderr bash "$INTERACT_SH"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"whirr-distinctive"* || "$output" == *"whirr"*"distinctive"* ]]
+  # Strict assertion — pin the bank-line picked, not just substring overlap with
+  # the placeholder. Placeholder must NOT appear when the bank is populated.
+  [[ "$output" == *"whirr-distinctive-fixture-line"* ]]
+  [[ "$output" != *"looks at you curiously"* ]]
 }
 
 @test "interact: invariant — does not mutate buddy.json or session-*.json across two runs" {

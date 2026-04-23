@@ -50,6 +50,12 @@ _buddy_line_width() {
 
 _buddy_line_species_emoji() {
   local species="$1"
+  # Path-traversal guard: reject anything that doesn't look like a canonical
+  # species id. Matches the discipline in scripts/status.sh + scripts/interact.sh.
+  if [[ ! "$species" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+    printf '%s' "$FALLBACK_EMOJI"
+    return 0
+  fi
   local species_dir="${BUDDY_SPECIES_DIR:-$_BUDDY_LINE_DIR/../scripts/species}"
   local file="$species_dir/$species.json"
   if [[ ! -f "$file" ]]; then

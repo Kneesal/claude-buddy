@@ -11,9 +11,11 @@
 
 _INTERACT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/state.sh
-source "$_INTERACT_DIR/lib/state.sh" || exit 1
+# Render surface — exit 0 on lib-load failure so a packaging bug never breaks
+# the user's session. Empty stdout is the graceful fallback.
+source "$_INTERACT_DIR/lib/state.sh" || { echo ""; exit 0; }
 # shellcheck source=scripts/lib/render.sh
-source "$_INTERACT_DIR/lib/render.sh" || exit 1
+source "$_INTERACT_DIR/lib/render.sh" || { echo ""; exit 0; }
 
 _interact_species_dir() {
   if [[ -n "${BUDDY_SPECIES_DIR:-}" ]]; then
@@ -52,6 +54,10 @@ _interact_render_active() {
     (.buddy.rarity  | gsub("[\\n\\r\\t]"; " ")),
     (.buddy.shiny   // false | tostring)
   ' 2>/dev/null)"
+  if [[ -z "$fields_raw" ]]; then
+    echo "Buddy state needs repair. Run /buddy:reset or restore from backup."
+    return 0
+  fi
 
   local -a parts=()
   readarray -t parts <<< "$fields_raw"

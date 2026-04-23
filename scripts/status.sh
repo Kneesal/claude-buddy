@@ -8,11 +8,14 @@
 
 _STATUS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/state.sh
-source "$_STATUS_DIR/lib/state.sh" || exit 1
+# Render surfaces must exit 0 on internal failure (matches the rest of the
+# plugin's discipline). A library that fails to load makes us emit an empty
+# line and leave gracefully rather than break the user's session.
+source "$_STATUS_DIR/lib/state.sh" || { echo ""; exit 0; }
 # shellcheck source=scripts/lib/evolution.sh
-source "$_STATUS_DIR/lib/evolution.sh" || exit 1
+source "$_STATUS_DIR/lib/evolution.sh" || { echo ""; exit 0; }
 # shellcheck source=scripts/lib/render.sh
-source "$_STATUS_DIR/lib/render.sh" || exit 1
+source "$_STATUS_DIR/lib/render.sh" || { echo ""; exit 0; }
 
 _status_render_repair() {
   echo "Buddy state needs repair. Run /buddy:reset or restore from backup."
