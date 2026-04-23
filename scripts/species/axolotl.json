@@ -254,7 +254,12 @@
         "we're both a tiny bit braver now",
         "leveled up! deep breath, proud of us"
       ]
+    },
+    "Interact": {
+      "default": []
     }
   },
-  "sprite": null
+  "sprite": {
+    "base": []
+  }
 }

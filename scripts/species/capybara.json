@@ -252,7 +252,12 @@
         "level up. nothing to prove.",
         "gained a tier. unbothered as ever."
       ]
+    },
+    "Interact": {
+      "default": []
     }
   },
-  "sprite": null
+  "sprite": {
+    "base": []
+  }
 }
