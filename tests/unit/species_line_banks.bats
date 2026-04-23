@@ -5,7 +5,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load test_helper
+load ../test_helper
 
 SPECIES_FILES=(
   "$SPECIES_DIR/axolotl.json"
@@ -43,6 +43,17 @@ SPECIES_FILES=(
     local n
     n="$(jq -r '.line_banks.Stop.default | length' "$f")"
     [ "$n" -ge 50 ] || { echo "$f: Stop.default has $n"; return 1; }
+  done
+}
+
+@test "species: P4-1 LevelUp.default has ≥10 lines per species" {
+  # Level-ups are infrequent (50 levels total) so the bank is smaller
+  # than the per-event defaults. 10+ keeps the shuffle-bag fresh
+  # across a realistic play-through without fight-club repeats.
+  for f in "${SPECIES_FILES[@]}"; do
+    local n
+    n="$(jq -r '.line_banks.LevelUp.default | length' "$f")"
+    [ "$n" -ge 10 ] || { echo "$f: LevelUp.default has $n"; return 1; }
   done
 }
 

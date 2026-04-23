@@ -11,11 +11,28 @@
     "snark": "neutral"
   },
   "name_pool": [
-    "Pip", "Bean", "Spud", "Mochi", "Toast",
-    "Peach", "Dumpling", "Blob", "Noodle", "Biscuit",
-    "Puddle", "Sprout", "Gummy", "Custard", "Taffy",
-    "Marshmallow", "Bubble", "Cloud", "Jelly", "Tofu",
-    "Glimmer", "Pickle"
+    "Pip",
+    "Bean",
+    "Spud",
+    "Mochi",
+    "Toast",
+    "Peach",
+    "Dumpling",
+    "Blob",
+    "Noodle",
+    "Biscuit",
+    "Puddle",
+    "Sprout",
+    "Gummy",
+    "Custard",
+    "Taffy",
+    "Marshmallow",
+    "Bubble",
+    "Cloud",
+    "Jelly",
+    "Tofu",
+    "Glimmer",
+    "Pickle"
   ],
   "evolution_paths": {},
   "line_banks": {
@@ -220,6 +237,22 @@
         "long session energy, i salute you",
         "go eat something that isn't a snack food",
         "that was a whole coding ocean, you crossed it"
+      ]
+    },
+    "LevelUp": {
+      "default": [
+        "hehehe we leveled up, together",
+        "new level, same cozy us",
+        "look at us climbing the tiny ladder",
+        "a little growth spurt, very gentle",
+        "tiny step forward, everything softer",
+        "warmer, wiser, still a bit squishy",
+        "level up, hooray, crunchy snack energy",
+        "another ring on the little tree",
+        "up a notch, same heart exactly",
+        "grew a bit today, thanks friend",
+        "we're both a tiny bit braver now",
+        "leveled up! deep breath, proud of us"
       ]
     }
   },

@@ -52,6 +52,16 @@
 #   - PostToolUseFailure.error_burst (3+ failures within 5min)
 #   - Stop.long_session           (startedAt > 1h ago)
 #
+# Fork budget (P4-1 Unit 2 fusion pass):
+#   A successful PTU emit runs ~5 jq forks (down from ~17 in P3-2):
+#     1 gate-read + lastEventType write  (fused)
+#     1 milestone bank resolve           (may be skipped on default bank)
+#     1 draw bank_len read               (pre-shuffle sizing)
+#     1 fused draw                       (bag pop/slice + session write)
+#     1 emit-mutations                   (cooldown + budget + firstEdit)
+#   Skip paths are a single fork. See docs/solutions/best-practices/
+#   bash-jq-fork-collapse-hot-path-2026-04-21.md for the pattern.
+#
 # Env-var hooks (for tests + power users):
 #   BUDDY_COMMENTS_PER_SESSION — override the per-session cap.
 #   BUDDY_STOP_LINE_ON_EXIT    — "0"/"false" disables the Stop goodbye.
@@ -278,7 +288,7 @@ hook_commentary_select() {
   _BUDDY_SESSION_UPDATED="$session_json"
 
   case "$event_type" in
-    PostToolUse|PostToolUseFailure|Stop) ;;
+    PostToolUse|PostToolUseFailure|Stop|LevelUp) ;;
     *)
       # Unknown event — pass-through. Hook layer never crashes.
       _commentary_emit
@@ -323,20 +333,145 @@ hook_commentary_select() {
   emoji="$(printf '%s' "$species_json" | jq -r '.emoji // ""' 2>/dev/null)"
 
   case "$event_type" in
-    PostToolUse)        _commentary_handle_ptu  "$species_json" "$name" "$emoji" "$now" ;;
-    PostToolUseFailure) _commentary_handle_ptuf "$species_json" "$name" "$emoji" "$now" ;;
-    Stop)               _commentary_handle_stop "$species_json" "$name" "$emoji" "$now" ;;
+    PostToolUse)        _commentary_handle_ptu       "$species_json" "$name" "$emoji" "$now" ;;
+    PostToolUseFailure) _commentary_handle_ptuf      "$species_json" "$name" "$emoji" "$now" ;;
+    Stop)               _commentary_handle_stop      "$species_json" "$name" "$emoji" "$now" ;;
+    LevelUp)            _commentary_handle_level_up  "$species_json" "$name" "$emoji" "$now" ;;
   esac
 
   _commentary_emit
   return 0
 }
 
-# --- Per-event handlers ---
+# --- Fused gate-read + mutation helpers (P4-1 Unit 2) ---
+#
+# The P3-2 handlers did 15+ jq forks per successful emit: one jq per
+# gate read, one per mutation, multiple inside the draw. That put PTU
+# p95 at ~85ms against a 100ms budget with no headroom for P4-1's
+# signals work. The fork-collapse solutions doc
+# (docs/solutions/best-practices/bash-jq-fork-collapse-hot-path-
+# 2026-04-21.md) is the authoritative pattern; this block is its
+# P4-1 application. Observable behaviour is unchanged — the P3-2
+# test_commentary.bats suite must run green.
 
+# Fused PTU gate-read. Returns a 6-line stdout payload:
+#   line 1: cooldown_ok  (1 / 0)
+#   line 2: budget_ok    (1 / 0)
+#   line 3: first_fired  (true / false)
+#   line 4: prev_fires   (integer)
+#   line 5: prev_event   (string; empty if unset)
+#   line 6: session with lastEventType set to $e (compact JSON)
+#
+# Newline-separated (rather than @tsv) because jq compact JSON never
+# contains literal newlines — the split is unambiguous — while @tsv
+# escapes tabs inside the serialized payload and would corrupt the
+# JSON readback.
+#
+# lastEventType is written unconditionally so skip paths can persist
+# the update from a single jq fork without a second pass. D5.
+_commentary_ptu_gates_read() {
+  local session_json="$1"
+  local event_type="$2"
+  local now="$3"
+  local cap="$4"
+  printf '%s' "$session_json" | jq -r \
+    --arg e "$event_type" \
+    --argjson now "$now" \
+    --argjson cap "$cap" '
+    . as $s |
+    (.lastEventType = $e) as $updated |
+    ((($s.cooldowns[$e].nextAllowedAt // 0) | tonumber? // 0) as $n
+      | if $now >= $n then "1" else "0" end) as $cd_ok |
+    ((($s.commentsThisSession // 0) | tonumber? // 0) as $c
+      | if $c < $cap then "1" else "0" end) as $bud_ok |
+    (($s.commentary.firstEditFired // false) | tostring) as $fired |
+    (($s.cooldowns[$e].fires // 0) | tonumber? // 0 | tostring) as $pf |
+    ($s.lastEventType // "") as $pe |
+    "\($cd_ok)\n\($bud_ok)\n\($fired)\n\($pf)\n\($pe)\n\($updated | tojson)"
+  ' 2>/dev/null
+}
+
+# Fused PTUF gate-read. Extends the PTU variant with recentFailures
+# append+trim and returns the post-append failure count so the
+# error_burst milestone check runs in bash without an extra fork.
+# 7-line stdout:
+#   line 1: cooldown_ok
+#   line 2: budget_ok
+#   line 3: first_fired     (unused by PTUF; kept for shape symmetry)
+#   line 4: prev_fires
+#   line 5: prev_event
+#   line 6: session with lastEventType = $e AND recentFailures updated
+#   line 7: failure_count   (post-append integer)
+_commentary_ptuf_gates_read() {
+  local session_json="$1"
+  local event_type="$2"
+  local now="$3"
+  local cap="$4"
+  printf '%s' "$session_json" | jq -r \
+    --arg e "$event_type" \
+    --argjson now "$now" \
+    --argjson cap "$cap" \
+    --argjson window "$_COMMENTARY_BURST_WINDOW_SECS" \
+    --argjson fcap "$_COMMENTARY_RECENT_FAILURES_MAX" '
+    . as $s |
+    ($s | .recentFailures = (
+       ((.recentFailures // []) + [$now])
+       | map(select(type == "number" and . > ($now - $window)))
+       | .[-($fcap):]
+     )) as $after_failures |
+    ($after_failures | .lastEventType = $e) as $updated |
+    ((($s.cooldowns[$e].nextAllowedAt // 0) | tonumber? // 0) as $n
+      | if $now >= $n then "1" else "0" end) as $cd_ok |
+    ((($s.commentsThisSession // 0) | tonumber? // 0) as $c
+      | if $c < $cap then "1" else "0" end) as $bud_ok |
+    (($s.commentary.firstEditFired // false) | tostring) as $fired |
+    (($s.cooldowns[$e].fires // 0) | tonumber? // 0 | tostring) as $pf |
+    ($s.lastEventType // "") as $pe |
+    ($updated.recentFailures | length | tostring) as $fc |
+    "\($cd_ok)\n\($bud_ok)\n\($fired)\n\($pf)\n\($pe)\n\($updated | tojson)\n\($fc)"
+  ' 2>/dev/null
+}
+
+# Fused post-draw mutation: lastEventType = e, cooldowns[$e] bump,
+# commentsThisSession++, optional firstEditFired = true. ONE jq fork.
+# Caller has already bumped the bag (via _commentary_draw); this
+# runs on the session emitted by that draw.
+_commentary_apply_emit_mutations() {
+  local session_json="$1"
+  local event_type="$2"
+  local now="$3"
+  local prev_fires="$4"
+  local set_first_fired="$5"  # "true" or "false"
+
+  # Cooldown cadence is pre-computed in bash so the fused jq doesn't
+  # need to branch: first fire → +5min, subsequent → +15min (D4 from
+  # the P3-2 plan).
+  local cadence
+  if (( prev_fires == 0 )); then
+    cadence=$_COMMENTARY_COOLDOWN_FIRST
+  else
+    cadence=$_COMMENTARY_COOLDOWN_LATER
+  fi
+  local next=$(( now + cadence ))
+  local new_fires=$(( prev_fires + 1 ))
+  printf '%s' "$session_json" | jq -c \
+    --arg e "$event_type" \
+    --argjson fires "$new_fires" \
+    --argjson next "$next" \
+    --argjson setFirst "$set_first_fired" '
+    .lastEventType = $e
+    | .cooldowns[$e] = { fires: $fires, nextAllowedAt: $next }
+    | .commentsThisSession = ((.commentsThisSession // 0) + 1)
+    | (if $setFirst then .commentary.firstEditFired = true else . end)
+  ' 2>/dev/null
+}
+
+# --- Per-event handlers ---
+#
 # Handlers read/write _BUDDY_SESSION_UPDATED and may set
 # _BUDDY_COMMENT_LINE. They do NOT write to stdout. hook_commentary_select
-# does the final two-line emit.
+# does the final two-line emit. Fork budget per successful emit is
+# ~5 jq forks (see file-top comment).
 
 _commentary_handle_ptu() {
   local species_json="$1"
@@ -346,27 +481,37 @@ _commentary_handle_ptu() {
   local event_type="PostToolUse"
 
   local session_json="$_BUDDY_SESSION_UPDATED"
+  local cap
+  cap="$(_commentary_budget_cap)"
 
-  local prev_event
-  prev_event="$(printf '%s' "$session_json" | jq -r '.lastEventType // ""' 2>/dev/null)"
-
-  # Always update lastEventType on observation (D5).
-  session_json="$(printf '%s' "$session_json" \
-    | jq --arg e "$event_type" '.lastEventType = $e' 2>/dev/null)"
-  [[ -z "$session_json" ]] && return
-  _BUDDY_SESSION_UPDATED="$session_json"
-
-  if [[ "$prev_event" == "$event_type" ]]; then
+  local gates_out
+  gates_out="$(_commentary_ptu_gates_read "$session_json" "$event_type" "$now" "$cap")"
+  if [[ -z "$gates_out" ]]; then
     return
   fi
-  _commentary_cooldown_ok "$session_json" "$event_type" "$now" || return
-  _commentary_budget_ok "$session_json" || return
 
+  local cd_ok bud_ok fired prev_fires prev_event session_with_last
+  {
+    IFS= read -r cd_ok
+    IFS= read -r bud_ok
+    IFS= read -r fired
+    IFS= read -r prev_fires
+    IFS= read -r prev_event
+    IFS= read -r session_with_last
+  } <<< "$gates_out"
+
+  # Persist the lastEventType update on every outcome (D5 — always
+  # update on observation, regardless of emit decision).
+  [[ -n "$session_with_last" ]] && _BUDDY_SESSION_UPDATED="$session_with_last"
+
+  # Novelty gate: previous observed event was also PostToolUse.
+  [[ "$prev_event" == "$event_type" ]] && return
+  [[ "$cd_ok" != "1" ]] && return
+  [[ "$bud_ok" != "1" ]] && return
+
+  # Milestone bank selection — first_edit bank?
   local bank_name="default"
-  local first_edit_fired
-  first_edit_fired="$(printf '%s' "$session_json" \
-    | jq -r '.commentary.firstEditFired // false' 2>/dev/null)"
-  if [[ "$first_edit_fired" == "false" ]]; then
+  if [[ "$fired" == "false" ]]; then
     local milestone
     milestone="$(_commentary_resolve_bank "$species_json" "$event_type" "first_edit")"
     if [[ -n "$milestone" && "$milestone" != "[]" ]]; then
@@ -375,18 +520,19 @@ _commentary_handle_ptu() {
   fi
 
   local line_and_session
-  line_and_session="$(_commentary_draw "$session_json" "$species_json" "$event_type" "$bank_name")"
+  line_and_session="$(_commentary_draw "$session_with_last" "$species_json" "$event_type" "$bank_name")"
   [[ -z "$line_and_session" ]] && return
 
-  local line updated
+  local line post_draw
   line="${line_and_session%%$'\t'*}"
-  updated="${line_and_session#*$'\t'}"
+  post_draw="${line_and_session#*$'\t'}"
 
-  updated="$(_commentary_bump_cooldown "$updated" "$event_type" "$now")"
-  updated="$(_commentary_bump_budget "$updated")"
-  if [[ "$bank_name" == "first_edit" ]]; then
-    updated="$(printf '%s' "$updated" | jq '.commentary.firstEditFired = true' 2>/dev/null)"
-  fi
+  local set_first="false"
+  [[ "$bank_name" == "first_edit" ]] && set_first="true"
+
+  local updated
+  updated="$(_commentary_apply_emit_mutations "$post_draw" "$event_type" "$now" "$prev_fires" "$set_first")"
+  [[ -z "$updated" ]] && return
 
   _BUDDY_COMMENT_LINE="$(_commentary_format "$emoji" "$name" "$line")"
   _BUDDY_SESSION_UPDATED="$updated"
@@ -400,40 +546,37 @@ _commentary_handle_ptuf() {
   local event_type="PostToolUseFailure"
 
   local session_json="$_BUDDY_SESSION_UPDATED"
+  local cap
+  cap="$(_commentary_budget_cap)"
 
-  # Update recentFailures unconditionally — the burst trigger wants
-  # to see real event density even if the gate skips the emit. Prune
-  # by time window first, then hard-cap the tail so a pathological
-  # error loop can't inflate the session blob (we only need the last
-  # few entries to evaluate the BURST_THRESHOLD).
-  session_json="$(printf '%s' "$session_json" | jq \
-    --argjson now "$now" \
-    --argjson window "$_COMMENTARY_BURST_WINDOW_SECS" \
-    --argjson cap "$_COMMENTARY_RECENT_FAILURES_MAX" \
-    '.recentFailures = (
-       ((.recentFailures // []) + [$now])
-       | map(select(type == "number" and . > ($now - $window)))
-       | .[-($cap):]
-     )' 2>/dev/null)"
-  [[ -z "$session_json" ]] && return
-
-  local prev_event
-  prev_event="$(printf '%s' "$session_json" | jq -r '.lastEventType // ""' 2>/dev/null)"
-  session_json="$(printf '%s' "$session_json" \
-    | jq --arg e "$event_type" '.lastEventType = $e' 2>/dev/null)"
-  [[ -z "$session_json" ]] && return
-  _BUDDY_SESSION_UPDATED="$session_json"
-
-  if [[ "$prev_event" == "$event_type" ]]; then
+  local gates_out
+  gates_out="$(_commentary_ptuf_gates_read "$session_json" "$event_type" "$now" "$cap")"
+  if [[ -z "$gates_out" ]]; then
     return
   fi
-  _commentary_cooldown_ok "$session_json" "$event_type" "$now" || return
-  _commentary_budget_ok "$session_json" || return
 
+  local cd_ok bud_ok fired prev_fires prev_event session_with_last failure_count
+  {
+    IFS= read -r cd_ok
+    IFS= read -r bud_ok
+    IFS= read -r fired
+    IFS= read -r prev_fires
+    IFS= read -r prev_event
+    IFS= read -r session_with_last
+    IFS= read -r failure_count
+  } <<< "$gates_out"
+
+  # recentFailures was trimmed + appended AND lastEventType was set in
+  # the gates jq — persist on every outcome so burst-density tracking
+  # and D5 both hold on skip paths.
+  [[ -n "$session_with_last" ]] && _BUDDY_SESSION_UPDATED="$session_with_last"
+
+  [[ "$prev_event" == "$event_type" ]] && return
+  [[ "$cd_ok" != "1" ]] && return
+  [[ "$bud_ok" != "1" ]] && return
+
+  # Milestone: error_burst if 3+ failures inside the 5-min window.
   local bank_name="default"
-  local failure_count
-  failure_count="$(printf '%s' "$session_json" \
-    | jq -r '.recentFailures | length' 2>/dev/null)"
   if [[ "$failure_count" =~ ^[0-9]+$ ]] && (( failure_count >= _COMMENTARY_BURST_THRESHOLD )); then
     local milestone
     milestone="$(_commentary_resolve_bank "$species_json" "$event_type" "error_burst")"
@@ -443,15 +586,40 @@ _commentary_handle_ptuf() {
   fi
 
   local line_and_session
-  line_and_session="$(_commentary_draw "$session_json" "$species_json" "$event_type" "$bank_name")"
+  line_and_session="$(_commentary_draw "$session_with_last" "$species_json" "$event_type" "$bank_name")"
+  [[ -z "$line_and_session" ]] && return
+
+  local line post_draw
+  line="${line_and_session%%$'\t'*}"
+  post_draw="${line_and_session#*$'\t'}"
+
+  local updated
+  updated="$(_commentary_apply_emit_mutations "$post_draw" "$event_type" "$now" "$prev_fires" "false")"
+  [[ -z "$updated" ]] && return
+
+  _BUDDY_COMMENT_LINE="$(_commentary_format "$emoji" "$name" "$line")"
+  _BUDDY_SESSION_UPDATED="$updated"
+}
+
+_commentary_handle_level_up() {
+  local species_json="$1"
+  local name="$2"
+  local emoji="$3"
+  local now="$4"
+  local event_type="LevelUp"
+
+  # Bypass all three rate-limit gates — level-ups are infrequent and
+  # more informative than the per-event chatter they override (D9 of
+  # the P4-1 plan). Do NOT bump commentsThisSession here: the budget
+  # is for steady-state chatter and level-ups should never count
+  # against it.
+  local line_and_session
+  line_and_session="$(_commentary_draw "$_BUDDY_SESSION_UPDATED" "$species_json" "$event_type" "default")"
   [[ -z "$line_and_session" ]] && return
 
   local line updated
   line="${line_and_session%%$'\t'*}"
   updated="${line_and_session#*$'\t'}"
-
-  updated="$(_commentary_bump_cooldown "$updated" "$event_type" "$now")"
-  updated="$(_commentary_bump_budget "$updated")"
 
   _BUDDY_COMMENT_LINE="$(_commentary_format "$emoji" "$name" "$line")"
   _BUDDY_SESSION_UPDATED="$updated"
@@ -486,164 +654,106 @@ _commentary_handle_stop() {
   line_and_session="$(_commentary_draw "$session_json" "$species_json" "$event_type" "$bank_name")"
   [[ -z "$line_and_session" ]] && return
 
-  local line updated
+  local line post_draw
   line="${line_and_session%%$'\t'*}"
-  updated="${line_and_session#*$'\t'}"
+  post_draw="${line_and_session#*$'\t'}"
 
-  # Stop increments commentsThisSession for telemetry accounting but
-  # doesn't touch cooldowns or lastEventType (Stop is terminal; the
-  # novelty chain is about non-Stop events per D5/D7).
-  updated="$(_commentary_bump_budget "$updated")"
+  # Stop bumps commentsThisSession for telemetry (D7) but doesn't touch
+  # cooldowns or lastEventType. Fold the bump into a single jq on the
+  # post-draw session rather than reusing _commentary_apply_emit_mutations
+  # (which would also bump cooldown + lastEventType — not wanted here).
+  local updated
+  updated="$(printf '%s' "$post_draw" | jq -c '
+    .commentsThisSession = ((.commentsThisSession // 0) + 1)
+  ' 2>/dev/null)"
+  [[ -z "$updated" ]] && return
 
   _BUDDY_COMMENT_LINE="$(_commentary_format "$emoji" "$name" "$line")"
   _BUDDY_SESSION_UPDATED="$updated"
 }
 
-# --- Gate helpers ---
+# --- Shuffle-bag draw (fused, P4-1 Unit 2) ---
 
-# Returns 0 if the cooldown for this event type has expired (or never
-# been set). Returns 1 if the gate should block.
-_commentary_cooldown_ok() {
-  local session_json="$1"
-  local event_type="$2"
-  local now="$3"
-  local next
-  next="$(printf '%s' "$session_json" | jq -r --arg e "$event_type" '
-    .cooldowns[$e].nextAllowedAt // 0
-  ' 2>/dev/null)"
-  if ! [[ "$next" =~ ^[0-9]+$ ]]; then
-    return 0
-  fi
-  (( now >= next ))
-}
-
-# Returns 0 if commentsThisSession < budget cap; 1 otherwise.
-_commentary_budget_ok() {
-  local session_json="$1"
-  local count cap
-  count="$(printf '%s' "$session_json" | jq -r '.commentsThisSession // 0' 2>/dev/null)"
-  [[ "$count" =~ ^[0-9]+$ ]] || count=0
-  cap="$(_commentary_budget_cap)"
-  (( count < cap ))
-}
-
-# --- Mutators ---
-
-_commentary_bump_cooldown() {
-  local session_json="$1"
-  local event_type="$2"
-  local now="$3"
-  # Pre-emit fires (pre-increment) determines the next cadence:
-  # previous fires = 0 → first fire → next cadence = +5min
-  # previous fires = 1 → second fire → next cadence = +15min
-  # previous fires ≥ 2 → flat +15min
-  local prev_fires
-  prev_fires="$(printf '%s' "$session_json" | jq -r --arg e "$event_type" '
-    .cooldowns[$e].fires // 0
-  ' 2>/dev/null)"
-  [[ "$prev_fires" =~ ^[0-9]+$ ]] || prev_fires=0
-  local cadence
-  if (( prev_fires == 0 )); then
-    cadence=$_COMMENTARY_COOLDOWN_FIRST
-  else
-    cadence=$_COMMENTARY_COOLDOWN_LATER
-  fi
-  local next=$(( now + cadence ))
-  local new_fires=$(( prev_fires + 1 ))
-  printf '%s' "$session_json" | jq \
-    --arg e "$event_type" \
-    --argjson fires "$new_fires" \
-    --argjson next "$next" \
-    '.cooldowns[$e] = { fires: $fires, nextAllowedAt: $next }' 2>/dev/null
-}
-
-_commentary_bump_budget() {
-  printf '%s' "$1" | jq '
-    .commentsThisSession = ((.commentsThisSession // 0) + 1)
-  ' 2>/dev/null
-}
-
-# --- Shuffle-bag draw ---
-
-# Draw one line from commentary.bags[<event>]. Refills+reshuffles when
-# the bag is empty. Output format: "<line>\t<updated_session_json>" on
-# stdout, or empty stdout on skip (empty bank, JSON error).
+# Draw one line from commentary.bags[<event>.<bank>]. Refills+reshuffles
+# when the bag is empty. Output format: "<line>\t<updated_session_json>"
+# on stdout, or empty stdout on skip (empty bank, JSON error, out-of-range
+# index).
 #
-# NOTE: a line that happens to contain a literal TAB would break the
-# split. None of the P3-2 voice content contains tabs; structural tests
-# in Unit 4 enforce that.
+# Fork count: 2 jqs (bank_len read + fused draw). P3-2 did 8.
+#
+# The refill shuffle is computed in bash via _commentary_shuffle_seq and
+# handed to the fused jq as --argjson. Always computed — bash-level
+# Fisher-Yates on an N ≤ ~60 array is microseconds, and paying it
+# unconditionally lets the fused jq make one pass without a branch for
+# "is refill needed".
+#
+# NOTE: a line containing a literal TAB or newline would break the
+# caller's tab split. The fused jq substitutes both for spaces before
+# assembling the output; tests/species_line_banks.bats also rejects
+# such content up-front.
 _commentary_draw() {
   local session_json="$1"
   local species_json="$2"
   local event_type="$3"
   local bank_name="$4"
 
-  local bank_json
-  bank_json="$(_commentary_resolve_bank "$species_json" "$event_type" "$bank_name")"
-  if [[ -z "$bank_json" || "$bank_json" == "[]" ]]; then
-    return 0
-  fi
+  # Bank length — one jq fork. Used to size the bash-level shuffle.
   local bank_len
-  bank_len="$(printf '%s' "$bank_json" | jq 'length' 2>/dev/null)"
+  bank_len="$(printf '%s' "$species_json" | jq -r --arg e "$event_type" --arg b "$bank_name" '
+    (.line_banks[$e][$b] // [])
+    | if type == "array" then (map(select(type == "string")) | length) else 0 end
+  ' 2>/dev/null)"
   if ! [[ "$bank_len" =~ ^[0-9]+$ ]] || (( bank_len == 0 )); then
     return 0
   fi
 
-  # Bag key combines event_type + bank_name so the default bag and the
-  # milestone bag don't share indexes (a len-50 default and a len-10
-  # milestone can't share a cursor). Simple concatenation with `.`;
-  # both sides are fixed alphanumeric so there's no collision risk.
-  local bag_key="${event_type}.${bank_name}"
-
-  local current_bag
-  current_bag="$(printf '%s' "$session_json" | jq -rc --arg k "$bag_key" '
-    .commentary.bags[$k] // []
-  ' 2>/dev/null)"
-
-  # If bag is empty OR has wrong length for the bank (e.g., content
-  # update bumped bank size mid-session), refill.
-  local current_len
-  current_len="$(printf '%s' "$current_bag" | jq 'length' 2>/dev/null)"
-  [[ "$current_len" =~ ^[0-9]+$ ]] || current_len=0
-
-  if (( current_len == 0 )); then
-    local shuffled
-    shuffled="$(_commentary_shuffle_seq "$bank_len")"
-    # Build a JSON array from the space-separated ints.
-    current_bag="$(printf '%s\n' $shuffled | jq -cs '.')"
-    if [[ -z "$current_bag" || "$current_bag" == "null" ]]; then
-      current_bag='[]'
-    fi
-    current_len=$bank_len
+  local shuffled_ints
+  shuffled_ints="$(_commentary_shuffle_seq "$bank_len")"
+  # Build JSON array literal from the space-separated ints WITHOUT a
+  # jq fork. _commentary_shuffle_seq emits validated non-negative
+  # integers so bracket/comma substitution is safe.
+  local shuffled_json
+  if [[ -n "$shuffled_ints" ]]; then
+    shuffled_json="[${shuffled_ints// /,}]"
+  else
+    shuffled_json='[]'
   fi
 
-  # Pop head; draw the line at that index. If the index is out of
-  # range (content shrank mid-session, test override malformed), skip.
-  local draw_idx
-  draw_idx="$(printf '%s' "$current_bag" | jq -r '.[0] // empty' 2>/dev/null)"
-  if ! [[ "$draw_idx" =~ ^[0-9]+$ ]] || (( draw_idx >= bank_len )); then
-    return 0
-  fi
-  local line
-  line="$(printf '%s' "$bank_json" | jq -r --argjson i "$draw_idx" '.[$i] // empty' 2>/dev/null)"
-  if [[ -z "$line" ]]; then
-    return 0
-  fi
-
-  local new_bag
-  new_bag="$(printf '%s' "$current_bag" | jq -c '.[1:]' 2>/dev/null)"
-  [[ -z "$new_bag" ]] && new_bag='[]'
-
-  local updated
-  updated="$(printf '%s' "$session_json" | jq -c \
-    --arg k "$bag_key" \
-    --argjson bag "$new_bag" \
-    '.commentary.bags[$k] = $bag' 2>/dev/null)"
-  if [[ -z "$updated" ]]; then
-    return 0
-  fi
-
-  printf '%s\t%s' "$line" "$updated"
+  # Fused: bank strings, bag substitution, head-pop, slice, write.
+  printf '%s' "$session_json" | jq -r \
+    --argjson species "$species_json" \
+    --arg e "$event_type" \
+    --arg b "$bank_name" \
+    --argjson shuffled "$shuffled_json" '
+    . as $session |
+    ($species.line_banks[$e][$b] // []) as $raw |
+    (if ($raw | type) == "array"
+       then ($raw | map(select(type == "string")))
+       else []
+     end) as $bank |
+    ($bank | length) as $n |
+    ($e + "." + $b) as $k |
+    (.commentary.bags[$k] // []) as $cur |
+    (if ($cur | type) == "array" and ($cur | length) > 0
+       then $cur
+       else $shuffled
+     end) as $bag |
+    if $n == 0 or ($bag | length) == 0 then empty
+    else
+      ($bag[0]) as $idx |
+      (if ($idx | type) == "number" and $idx >= 0 and $idx < $n
+         then $bank[$idx]
+         else null
+       end) as $line |
+      if $line == null or ($line | type) != "string" or $line == "" then empty
+      else
+        # Sanitize tabs + newlines so the caller can split on the first \t.
+        ($line | gsub("\t"; " ") | gsub("\n"; " ") | gsub("\r"; " ")) as $safe |
+        ($session | .commentary.bags[$k] = $bag[1:]) as $new |
+        ($safe + "\t" + ($new | tojson))
+      end
+    end
+  ' 2>/dev/null
 }
 
 # --- Formatting ---

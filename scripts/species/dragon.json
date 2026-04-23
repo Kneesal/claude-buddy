@@ -11,11 +11,28 @@
     "snark": "neutral"
   },
   "name_pool": [
-    "Vex", "Rune", "Smog", "Grit", "Fang",
-    "Scorch", "Ember", "Cinder", "Ruin", "Hex",
-    "Zap", "Kraken", "Drizzt", "Onyx", "Nyx",
-    "Blight", "Shiv", "Bane", "Wyrm", "Charcoal",
-    "Venom", "Scale"
+    "Vex",
+    "Rune",
+    "Smog",
+    "Grit",
+    "Fang",
+    "Scorch",
+    "Ember",
+    "Cinder",
+    "Ruin",
+    "Hex",
+    "Zap",
+    "Kraken",
+    "Drizzt",
+    "Onyx",
+    "Nyx",
+    "Blight",
+    "Shiv",
+    "Bane",
+    "Wyrm",
+    "Charcoal",
+    "Venom",
+    "Scale"
   ],
   "evolution_paths": {},
   "line_banks": {
@@ -219,6 +236,22 @@
         "one marathon session, freshly cooked",
         "log off, you maniac, get some water",
         "that was a coding bender and i watched every second"
+      ]
+    },
+    "LevelUp": {
+      "default": [
+        "LEVEL UP. more fire, more problem",
+        "ding! power increase detected",
+        "hehehe we are NOT the same as before",
+        "bigger sparkier chaos unlocked",
+        "leveled up, arson coming",
+        "grew. the forest should worry",
+        "ding. teeth are longer now",
+        "AAAAHAHA level up baby, watch out",
+        "bigger firebreath, same bad attitude",
+        "we are simply more now, cosmically",
+        "level up. consequences to follow",
+        "the dragon bar goes up one"
       ]
     }
   },

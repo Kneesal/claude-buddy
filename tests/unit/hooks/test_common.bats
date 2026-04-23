@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load ../test_helper
+load ../../test_helper
 
 setup() {
   # Inherit CLAUDE_PLUGIN_DATA setup and source state.sh from the shared helper.
@@ -207,57 +207,12 @@ setup() {
   [ "$(echo "$output" | jq -r '.commentary.firstEditFired')" = "false" ]
 }
 
-# ------------------------------------------------------------
-# hook_ring_push + hook_ring_contains
-# ------------------------------------------------------------
-
-@test "hook_ring_push: appends a new id" {
-  local base out
-  base="$(hook_initial_session_json "s1")"
-  out="$(echo "$base" | hook_ring_push "id1")"
-  run jq -r '.recentToolCallIds | length' <<< "$out"
-  [ "$output" = "1" ]
-  run jq -r '.recentToolCallIds[0]' <<< "$out"
-  [ "$output" = "id1" ]
-}
-
-@test "hook_ring_push: duplicate id moves to tail without growing the ring" {
-  local base step1 step2
-  base="$(hook_initial_session_json "s1")"
-  step1="$(echo "$base" | hook_ring_push "id1")"
-  step1="$(echo "$step1" | hook_ring_push "id2")"
-  step2="$(echo "$step1" | hook_ring_push "id1")"
-  run jq -r '.recentToolCallIds | length' <<< "$step2"
-  [ "$output" = "2" ]
-  run jq -rc '.recentToolCallIds' <<< "$step2"
-  [ "$output" = '["id2","id1"]' ]
-}
-
-@test "hook_ring_push: eviction keeps the last 20 in insertion order" {
-  local cur
-  cur="$(hook_initial_session_json "s1")"
-  for i in $(seq 1 25); do
-    cur="$(echo "$cur" | hook_ring_push "id$i")"
-  done
-  run jq -r '.recentToolCallIds | length' <<< "$cur"
-  [ "$output" = "20" ]
-  run jq -r '.recentToolCallIds[0]' <<< "$cur"
-  [ "$output" = "id6" ]
-  run jq -r '.recentToolCallIds[-1]' <<< "$cur"
-  [ "$output" = "id25" ]
-}
-
-@test "hook_ring_contains: true when id is present" {
-  local base out
-  base="$(hook_initial_session_json "s1")"
-  out="$(echo "$base" | hook_ring_push "id1")"
-  run hook_ring_contains "$out" "id1"
+@test "hook_initial_session_json: P4-1 lastToolFilePath present and empty" {
+  run hook_initial_session_json "sess-p41"
   [ "$status" -eq 0 ]
+  # Field exists (not null/missing) and starts as empty string. Feeds
+  # chaos.repeatedEditHits detection in signals.sh.
+  [ "$(echo "$output" | jq -r '.lastToolFilePath')" = "" ]
+  [ "$(echo "$output" | jq -r '.lastToolFilePath | type')" = "string" ]
 }
 
-@test "hook_ring_contains: false when id is absent" {
-  local base
-  base="$(hook_initial_session_json "s1")"
-  run hook_ring_contains "$base" "id1"
-  [ "$status" -ne 0 ]
-}

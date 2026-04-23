@@ -2,7 +2,12 @@
 
 bats_require_minimum_version 1.5.0
 
-load test_helper
+load ../test_helper
+
+# Pre-compute seed-42 hatch once per file (see test_helper.bash).
+setup_file() {
+  _prepare_hatched_cache
+}
 
 # Script paths and shared seeding helpers (_seed_hatch, _seed_corrupt,
 # _seed_future_version, _inject_tokens) come from test_helper.bash.

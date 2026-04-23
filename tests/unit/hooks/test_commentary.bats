@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-load ../test_helper
+load ../../test_helper
 
 COMMENTARY_SH="$REPO_ROOT/scripts/hooks/commentary.sh"
 COMMON_SH="$REPO_ROOT/scripts/hooks/common.sh"
@@ -431,4 +431,83 @@ JSON
   # Exactly one newline between the comment line and the JSON.
   # `echo -n` + wc would count 1.
   [ "$(printf '%s' "$out" | tr -cd '\n' | wc -c)" = "1" ]
+}
+
+# ------------------------------------------------------------
+# P4-1: LevelUp event handler bypasses all three rate-limit gates
+# and does NOT count against commentsThisSession (per D9).
+# ------------------------------------------------------------
+
+# Add a LevelUp bank to the fixture so the draw can succeed.
+_seed_levelup_bank() {
+  jq '.line_banks.LevelUp = { default: ["level-A", "level-B", "level-C"] }' \
+    "$BUDDY_SPECIES_DIR/testfrog.json" > "$BUDDY_SPECIES_DIR/testfrog.json.tmp"
+  mv "$BUDDY_SPECIES_DIR/testfrog.json.tmp" "$BUDDY_SPECIES_DIR/testfrog.json"
+}
+
+@test "LevelUp: bypasses novelty gate — fires even when lastEventType == LevelUp" {
+  _seed_levelup_bank
+  local buddy session
+  buddy="$(_buddy_json)"
+  # Pre-seed lastEventType=LevelUp — would silence any event bound
+  # by the novelty gate.
+  session="$(_session_json | jq '.lastEventType = "LevelUp"')"
+  _call LevelUp "$session" "$buddy"
+  [ -n "$_BUDDY_COMMENT_LINE" ]
+  [[ "$_BUDDY_COMMENT_LINE" =~ level-[ABC] ]]
+}
+
+@test "LevelUp: bypasses cooldown gate — fires even with active nextAllowedAt" {
+  _seed_levelup_bank
+  local buddy session far_future
+  buddy="$(_buddy_json)"
+  far_future=9999999999
+  session="$(_session_json | jq --argjson n "$far_future" '.cooldowns.LevelUp = { fires: 99, nextAllowedAt: $n }')"
+  _call LevelUp "$session" "$buddy"
+  [ -n "$_BUDDY_COMMENT_LINE" ]
+}
+
+@test "LevelUp: bypasses budget gate — fires even when commentsThisSession >= cap" {
+  _seed_levelup_bank
+  local buddy session
+  buddy="$(_buddy_json)"
+  session="$(_session_json | jq '.commentsThisSession = 100')"
+  BUDDY_COMMENTS_PER_SESSION=8 _call LevelUp "$session" "$buddy"
+  [ -n "$_BUDDY_COMMENT_LINE" ]
+}
+
+@test "LevelUp: does NOT increment commentsThisSession (gate-bypass invariant)" {
+  _seed_levelup_bank
+  local buddy session before_count after_count
+  buddy="$(_buddy_json)"
+  session="$(_session_json | jq '.commentsThisSession = 3')"
+  before_count="$(echo "$session" | jq '.commentsThisSession')"
+  _call LevelUp "$session" "$buddy"
+  after_count="$(echo "$_BUDDY_SESSION_UPDATED" | jq '.commentsThisSession')"
+  [ "$before_count" = "3" ]
+  [ "$after_count" = "3" ]
+}
+
+@test "LevelUp: does NOT bump cooldowns.LevelUp (gate-bypass invariant)" {
+  _seed_levelup_bank
+  local buddy session cooldowns_after
+  buddy="$(_buddy_json)"
+  session="$(_session_json)"
+  _call LevelUp "$session" "$buddy"
+  # cooldowns is {} in the initial shape; LevelUp handler must not
+  # add a key for itself (nothing to rate-limit against).
+  cooldowns_after="$(echo "$_BUDDY_SESSION_UPDATED" | jq -c '.cooldowns')"
+  [ "$cooldowns_after" = "{}" ]
+}
+
+@test "LevelUp: empty bank → silent skip, no crash, session unchanged" {
+  # No _seed_levelup_bank — species has no LevelUp entry.
+  local buddy session before after
+  buddy="$(_buddy_json)"
+  session="$(_session_json)"
+  before="$(echo "$session" | jq -c '.')"
+  _call LevelUp "$session" "$buddy"
+  after="$(echo "$_BUDDY_SESSION_UPDATED" | jq -c '.')"
+  [ -z "$_BUDDY_COMMENT_LINE" ]
+  [ "$before" = "$after" ]
 }

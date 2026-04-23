@@ -2,7 +2,14 @@
 
 bats_require_minimum_version 1.5.0
 
-load test_helper
+load ../test_helper
+
+# Pre-compute the seed-42 hatch once per file so every `_seed_hatch`
+# call in the test body copies the cached JSON instead of re-running
+# roll_buddy (which forks jq ~5 times per call). See test_helper.bash.
+setup_file() {
+  _prepare_hatched_cache
+}
 
 # Script paths and shared seeding helpers (_seed_hatch, _seed_corrupt,
 # _seed_future_version, _inject_tokens) come from test_helper.bash.
@@ -30,6 +37,16 @@ load test_helper
   [ "$level" = "1" ]
   # Pity is 0 (Rare+) or 1 (Common) depending on the random roll.
   [[ "$pity" =~ ^[0-9]+$ ]]
+
+  # P4-1: signals skeleton is baked in so new hatches start with the
+  # full four-axis shape.
+  [ "$(jq -r '.buddy.signals.consistency.streakDays' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.consistency.lastActiveDay' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "1970-01-01" ]
+  [ "$(jq -r '.buddy.signals.variety.toolsUsed | type' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "object" ]
+  [ "$(jq -r '.buddy.signals.quality.successfulEdits' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.quality.totalEdits' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.chaos.errors' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
+  [ "$(jq -r '.buddy.signals.chaos.repeatedEditHits' "$CLAUDE_PLUGIN_DATA/buddy.json")" = "0" ]
 }
 
 @test "hatch: first hatch ignores --confirm flag (treats it as first hatch, not reroll)" {

@@ -255,6 +255,17 @@ buddy_load() {
 # .tmp files are named with PID so state_cleanup_orphans can skip files
 # belonging to live processes, avoiding a race with in-flight writes.
 # Returns 0 on success, 1 on failure.
+#
+# Caller-held flock override: if _BUDDY_SAVE_LOCK_HELD=1 is exported in
+# the caller's environment, buddy_save skips its internal flock and
+# trusts the caller's critical section. This is the P4-1 pattern for
+# hooks that hold the buddy.json.lock themselves across a load-modify-
+# save cycle (see hooks/post-tool-use.sh). Two flock calls on the same
+# file from different open file descriptions in the same process are
+# treated by the kernel as distinct lock holders — the second acquire
+# would deadlock and time out without this escape hatch. Non-hook
+# callers (slash commands, reset) don't set the override so they still
+# get library-level protection.
 buddy_save() {
   local data_dir
   data_dir="$(_state_ensure_dir "buddy_save")" || return 1
@@ -275,50 +286,61 @@ buddy_save() {
     return 1
   fi
 
-  # Reject symlinked lock file. Opening a symlinked regular file with
-  # exec {fd}>file would truncate the target (O_TRUNC); a FIFO symlink would
-  # hang indefinitely before flock's timeout could help. Neither is safe.
-  if [[ -L "$lock_file" ]]; then
-    _state_log "buddy_save: refusing to open symlinked lock file $lock_file"
-    return 1
+  # Caller-held flock escape hatch. Hooks that nest buddy.json.lock
+  # inside the session lock set this to 1; any other caller (slash
+  # commands, reset.sh) leaves it unset and gets the library-level
+  # flock below.
+  local caller_holds_lock=0
+  if [[ "${_BUDDY_SAVE_LOCK_HELD:-}" == "1" ]]; then
+    caller_holds_lock=1
   fi
 
-  # Acquire flock using exec-based fd
-  local lock_fd
-  if ! exec {lock_fd}>"$lock_file"; then
-    _state_log "buddy_save: failed to open lock file"
-    return 1
-  fi
+  local lock_fd=""
+  if (( caller_holds_lock == 0 )); then
+    # Reject symlinked lock file. Opening a symlinked regular file with
+    # exec {fd}>file would truncate the target (O_TRUNC); a FIFO symlink would
+    # hang indefinitely before flock's timeout could help. Neither is safe.
+    if [[ -L "$lock_file" ]]; then
+      _state_log "buddy_save: refusing to open symlinked lock file $lock_file"
+      return 1
+    fi
 
-  if ! flock -x -w "$FLOCK_TIMEOUT" "$lock_fd"; then
-    exec {lock_fd}>&-
-    _state_log "buddy_save: flock timeout after ${FLOCK_TIMEOUT}s"
-    return 1
+    # Acquire flock using exec-based fd
+    if ! exec {lock_fd}>"$lock_file"; then
+      _state_log "buddy_save: failed to open lock file"
+      return 1
+    fi
+
+    if ! flock -x -w "$FLOCK_TIMEOUT" "$lock_fd"; then
+      exec {lock_fd}>&-
+      _state_log "buddy_save: flock timeout after ${FLOCK_TIMEOUT}s"
+      return 1
+    fi
   fi
 
   # Create temp file named with PID so cleanup can identify live writers.
   local tmp
   if ! tmp="$(mktemp "$data_dir/.tmp.$$.XXXXXX")"; then
-    exec {lock_fd}>&-
+    [[ -n "$lock_fd" ]] && exec {lock_fd}>&-
     _state_log "buddy_save: failed to create temp file"
     return 1
   fi
 
   if ! printf '%s\n' "$content" > "$tmp"; then
     rm -f "$tmp"
-    exec {lock_fd}>&-
+    [[ -n "$lock_fd" ]] && exec {lock_fd}>&-
     _state_log "buddy_save: failed to write temp file"
     return 1
   fi
 
   if ! mv -f "$tmp" "$buddy_file"; then
     rm -f "$tmp"
-    exec {lock_fd}>&-
+    [[ -n "$lock_fd" ]] && exec {lock_fd}>&-
     _state_log "buddy_save: failed to rename temp to $buddy_file"
     return 1
   fi
 
-  exec {lock_fd}>&-
+  [[ -n "$lock_fd" ]] && exec {lock_fd}>&-
   return 0
 }
 

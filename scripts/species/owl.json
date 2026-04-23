@@ -11,11 +11,28 @@
     "snark": "dump-prefer"
   },
   "name_pool": [
-    "Minerva", "Archimedes", "Hedwig", "Newton", "Kepler",
-    "Bohr", "Darwin", "Euler", "Fermat", "Galileo",
-    "Huxley", "Ptolemy", "Quine", "Tycho", "Voltaire",
-    "Whitcomb", "Briggs", "Plinius", "Vesta", "Otho",
-    "Edith", "Rook"
+    "Minerva",
+    "Archimedes",
+    "Hedwig",
+    "Newton",
+    "Kepler",
+    "Bohr",
+    "Darwin",
+    "Euler",
+    "Fermat",
+    "Galileo",
+    "Huxley",
+    "Ptolemy",
+    "Quine",
+    "Tycho",
+    "Voltaire",
+    "Whitcomb",
+    "Briggs",
+    "Plinius",
+    "Vesta",
+    "Otho",
+    "Edith",
+    "Rook"
   ],
   "evolution_paths": {},
   "line_banks": {
@@ -218,6 +235,22 @@
         "the archive stamps this one LONG and NOTABLE",
         "you have kept pace with the monks of old — well done",
         "this calls for a proper meal, not merely a snack"
+      ]
+    },
+    "LevelUp": {
+      "default": [
+        "ascension noted in the ledger",
+        "one tier higher, as expected",
+        "a formal promotion has been logged",
+        "progression achieved; congratulations are in order",
+        "the manuscript records a new chapter",
+        "observe: the bar has advanced",
+        "growth recorded, per the proper channels",
+        "one has leveled; one acknowledges",
+        "an ascension, duly earned and annotated",
+        "the scholars will update their citations",
+        "level up: most satisfactory, quietly",
+        "proceeding to the next stratum, as written"
       ]
     }
   },

@@ -11,12 +11,8 @@
 _STATUS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/state.sh
 source "$_STATUS_DIR/lib/state.sh" || exit 1
-
-# Placeholder XP ceiling until P4-1 ships the real curve.
-# Umbrella-plan formula: xpForLevel(n) = 50 * n * (n + 1). Evaluated at n=1
-# that's 50*1*2 = 100. P4-1 replaces this constant with a real per-level call
-# and updates the XP line below to show "xp / xpForLevel(level)".
-readonly NEXT_LEVEL_XP_PLACEHOLDER=100
+# shellcheck source=scripts/lib/evolution.sh
+source "$_STATUS_DIR/lib/evolution.sh" || exit 1
 
 # Render the "buddy state needs repair" message. Used both for the CORRUPT
 # sentinel path and for schema-valid envelopes that fail the shape check in
@@ -81,8 +77,11 @@ _status_render_active() {
   # since species IDs are canonically lowercase in species files.
   local rarity_disp="${rarity^}"
 
+  local xp_ceiling
+  xp_ceiling="$(xpForLevel "$level")"
+
   printf '%s — %s %s (Lv.%s %s form)\n' "$name" "$rarity_disp" "$species" "$level" "$form"
-  printf '  XP: %s / %s\n' "$xp" "$NEXT_LEVEL_XP_PLACEHOLDER"
+  printf '  XP: %s / %s\n' "$xp" "$xp_ceiling"
   printf '  Stats: debugging %s, patience %s, chaos %s, wisdom %s, snark %s\n' \
     "$debugging" "$patience" "$chaos" "$wisdom" "$snark"
   printf '  Tokens: %s\n' "$balance"

@@ -2,7 +2,12 @@
 
 bats_require_minimum_version 1.5.0
 
-load ../test_helper
+load ../../test_helper
+
+# Pre-compute seed-42 hatch once per file (see test_helper.bash).
+setup_file() {
+  _prepare_hatched_cache
+}
 
 POST_SH="$REPO_ROOT/hooks/post-tool-use.sh"
 
@@ -216,4 +221,128 @@ _ring() {
   run _fire "sess-nb" "tu_1"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+# ------------------------------------------------------------
+# P4-1: signals + XP + level-up + repeated-edit + lock nesting
+# ------------------------------------------------------------
+
+# Fire with a richer payload that carries tool_name and file_path so
+# the signals / repeatedEditHits code paths can be exercised.
+_fire_with_tool() {
+  local sid="$1" tcid="$2" tool="$3" file="$4"
+  jq -n --arg s "$sid" --arg t "$tcid" --arg n "$tool" --arg f "$file" '
+    { hook_event_name: "PostToolUse",
+      session_id: $s,
+      tool_use_id: $t,
+      tool_name: $n,
+      tool_input: { file_path: $f }
+    }' | "$POST_SH"
+}
+
+@test "post-tool-use: P4-1 signals land on buddy.json after a successful fire" {
+  _seed_hatch 42
+  _fire_with_tool "sess-sig" "tu_1" "Edit" "/workspace/a.txt" >/dev/null
+  local buddy_file="$CLAUDE_PLUGIN_DATA/buddy.json"
+  # XP advanced: first-of-day → 2 PTU + 10 streak = 12.
+  [ "$(jq -r '.buddy.xp' "$buddy_file")" = "12" ]
+  # Streak reset + bumped to 1 (sentinel 1970-01-01 → 1).
+  [ "$(jq -r '.buddy.signals.consistency.streakDays' "$buddy_file")" = "1" ]
+  # Tool recorded in variety.toolsUsed.
+  [ "$(jq -r '.buddy.signals.variety.toolsUsed.Edit | type' "$buddy_file")" = "number" ]
+  # quality.successfulEdits and totalEdits both bumped (Edit is an edit tool).
+  [ "$(jq -r '.buddy.signals.quality.successfulEdits' "$buddy_file")" = "1" ]
+  [ "$(jq -r '.buddy.signals.quality.totalEdits' "$buddy_file")" = "1" ]
+  # Session's lastToolFilePath captured.
+  [ "$(jq -r '.lastToolFilePath' "$CLAUDE_PLUGIN_DATA/session-sess-sig.json")" = "/workspace/a.txt" ]
+}
+
+@test "post-tool-use: P4-1 repeatedEditHits bumps on consecutive same-file Edits" {
+  _seed_hatch 42
+  _fire_with_tool "sess-rep" "tu_1" "Edit" "/workspace/foo.txt" >/dev/null
+  local buddy_file="$CLAUDE_PLUGIN_DATA/buddy.json"
+  # First fire: no prior path → no match.
+  [ "$(jq -r '.buddy.signals.chaos.repeatedEditHits' "$buddy_file")" = "0" ]
+  _fire_with_tool "sess-rep" "tu_2" "Edit" "/workspace/foo.txt" >/dev/null
+  # Second fire on same file: repeatedEditHits bumps.
+  [ "$(jq -r '.buddy.signals.chaos.repeatedEditHits' "$buddy_file")" = "1" ]
+}
+
+@test "post-tool-use: P4-1 Bash (non-edit) does not bump quality or chaos" {
+  _seed_hatch 42
+  _fire_with_tool "sess-b" "tu_1" "Bash" "" >/dev/null
+  local buddy_file="$CLAUDE_PLUGIN_DATA/buddy.json"
+  [ "$(jq -r '.buddy.signals.quality.successfulEdits' "$buddy_file")" = "0" ]
+  [ "$(jq -r '.buddy.signals.chaos.repeatedEditHits' "$buddy_file")" = "0" ]
+  # Bash is still recorded in variety.toolsUsed.
+  [ "$(jq -r '.buddy.signals.variety.toolsUsed.Bash | type' "$buddy_file")" = "number" ]
+}
+
+@test "post-tool-use: P4-1 level-up fires a LevelUp commentary line" {
+  _seed_hatch 42
+  local buddy_file="$CLAUDE_PLUGIN_DATA/buddy.json"
+  # Pre-seed XP close to threshold AND lastActiveDay = today so no
+  # streak bonus is paid; +2 PTU carries xp from 99 to 101 → Lv 2.
+  local today
+  today="$(date -u +%Y-%m-%d)"
+  local signals
+  signals='{"consistency":{"streakDays":1,"lastActiveDay":"'"$today"'"},"variety":{"toolsUsed":{}},"quality":{"successfulEdits":0,"totalEdits":0},"chaos":{"errors":0,"repeatedEditHits":0}}'
+  local tmp
+  tmp="$(mktemp "$CLAUDE_PLUGIN_DATA/.seed.XXX")"
+  jq --argjson sig "$signals" '.buddy.xp = 99 | .buddy.level = 1 | .buddy.signals = $sig' "$buddy_file" > "$tmp"
+  mv -f "$tmp" "$buddy_file"
+
+  # Synthesize a minimal LevelUp bank via BUDDY_SPECIES_DIR override
+  # so the real species files stay untouched (Unit 5 ships the real
+  # content).
+  local species_dir="$BATS_TEST_TMPDIR/species"
+  mkdir -p "$species_dir"
+  jq '.line_banks.LevelUp = { default: ["level up line"] }' "$REPO_ROOT/scripts/species/axolotl.json" > "$species_dir/axolotl.json"
+  local s
+  for s in dragon owl ghost capybara; do
+    cp "$REPO_ROOT/scripts/species/${s}.json" "$species_dir/${s}.json"
+  done
+  export BUDDY_SPECIES_DIR="$species_dir"
+
+  run _fire_with_tool "sess-lu" "tu_1" "Bash" ""
+  [ "$status" -eq 0 ]
+  # Output is the LevelUp line, not the PTU default-bank line.
+  [[ "$output" == *"level up line"* ]]
+  # Buddy advanced.
+  [ "$(jq -r '.buddy.level' "$buddy_file")" = "2" ]
+  [ "$(jq -r '.buddy.xp' "$buddy_file")" = "101" ]
+
+  unset BUDDY_SPECIES_DIR
+}
+
+@test "post-tool-use: P4-1 lock ordering — buddy.json.lock exists after a fire" {
+  _seed_hatch 42
+  _fire_with_tool "sess-lk" "tu_1" "Bash" "" >/dev/null
+  # Both lock files should exist after the fire (released but not unlinked).
+  [ -f "$CLAUDE_PLUGIN_DATA/session-sess-lk.json.lock" ]
+  [ -f "$CLAUDE_PLUGIN_DATA/buddy.json.lock" ]
+}
+
+@test "post-tool-use: P4-1 concurrent dual-fire does not lose XP among survivors" {
+  _seed_hatch 42
+  local buddy_file="$CLAUDE_PLUGIN_DATA/buddy.json"
+  # Ten concurrent PTU fires with unique tool_use_ids. The flock
+  # timeout is 0.2s; under contention some tail fires may time out
+  # cleanly and log without writing state. The invariant we enforce
+  # is that EVERY fire that made it into the ring ALSO landed its
+  # XP delta — no lost updates for the survivors.
+  local i
+  for i in $(seq 1 10); do
+    _fire_with_tool "sess-cc" "tu_$i" "Bash" "" &
+  done
+  wait
+  local ring_len xp
+  ring_len="$(jq -r '.recentToolCallIds | length' "$CLAUDE_PLUGIN_DATA/session-sess-cc.json")"
+  xp="$(jq -r '.buddy.xp' "$buddy_file")"
+  # Expected: first survivor pays +12 (streak bonus), rest pay +2 each.
+  local expected=$(( 12 + (ring_len - 1) * 2 ))
+  [ "$xp" = "$expected" ]
+  # At least a few survivors — if ALL timed out, something is
+  # structurally wrong beyond contention.
+  (( ring_len >= 3 ))
 }

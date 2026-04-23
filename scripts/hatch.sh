@@ -22,6 +22,8 @@ _HATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_HATCH_DIR/lib/state.sh" || exit 1
 # shellcheck source=scripts/lib/rng.sh
 source "$_HATCH_DIR/lib/rng.sh" || exit 1
+# shellcheck source=scripts/lib/evolution.sh
+source "$_HATCH_DIR/lib/evolution.sh" || exit 1
 
 readonly REROLL_COST=10
 
@@ -32,13 +34,21 @@ _hatch_now_utc() {
 
 # Compose the first-hatch envelope. Reads inner-buddy JSON from $1, new pity
 # counter from $2. Writes the full envelope to stdout.
+#
+# P4-1: the inner buddy object gets a .signals child baked in from the
+# canonical skeleton so new hatches ship with the full four-axis shape.
+# Existing (pre-P4-1) buddies are picked up lazily on their first hook
+# fire via jq `// default` reads in scripts/hooks/signals.sh.
 _hatch_compose_first_envelope() {
   local inner="$1"
   local next_pity="$2"
   local now
   now="$(_hatch_now_utc)"
+  local signals
+  signals="$(signals_skeleton)"
   jq -n -c \
     --argjson buddy "$inner" \
+    --argjson signals "$signals" \
     --arg hatchedAt "$now" \
     --arg windowStartedAt "$now" \
     --argjson pityCounter "$next_pity" \
@@ -46,7 +56,7 @@ _hatch_compose_first_envelope() {
       schemaVersion: 1,
       hatchedAt: $hatchedAt,
       lastRerollAt: null,
-      buddy: $buddy,
+      buddy: ($buddy + {signals: $signals}),
       tokens: {
         balance: 0,
         earnedToday: 0,
@@ -72,13 +82,20 @@ _hatch_compose_reroll_envelope() {
   local cost="$4"
   local now
   now="$(_hatch_now_utc)"
+  local signals
+  signals="$(signals_skeleton)"
+  # P4-1 / R6: a reroll wipes level/form/signals (pure-growth progression
+  # means the new buddy starts fresh). The new inner object does not
+  # carry signals (rng.sh defers shape ownership to P4-1), so bake the
+  # skeleton in here alongside the wholesale .buddy replacement.
   printf '%s' "$existing" | jq -c \
     --argjson buddy "$inner" \
+    --argjson signals "$signals" \
     --arg lastRerollAt "$now" \
     --argjson pityCounter "$next_pity" \
     --argjson cost "$cost" \
     '.lastRerollAt = $lastRerollAt
-     | .buddy = $buddy
+     | .buddy = ($buddy + {signals: $signals})
      | .tokens.balance = (.tokens.balance - $cost)
      | .meta.totalHatches = (.meta.totalHatches + 1)
      | .meta.pityCounter = $pityCounter'
