@@ -1,7 +1,7 @@
 ---
 title: Bash state library patterns for Claude Code plugins
 date: 2026-04-18
-last_updated: 2026-04-19
+last_updated: 2026-04-23
 category: best-practices
 module: scripts/lib/state.sh
 problem_type: best_practice
@@ -131,6 +131,45 @@ if [[ -L "$lock_file" ]]; then
 fi
 exec {lock_fd}>"$lock_file"
 ```
+
+**Caller-held-lock escape hatch (added for P4-1).** The library-
+level flock above is correct for non-hook callers. But when a hook
+holds its own flock on the same lock file across a load-modify-save
+cycle, a second acquire from `buddy_save` on a fresh fd is treated
+by the kernel as a distinct lock holder — Linux flock is per-open-
+file-description, not re-entrant per-process. The inner acquire
+blocks on the caller's outer hold, times out at 0.2 s, and the
+save silently fails.
+
+Add an env-var override so callers that hold the lock themselves
+can skip the library-level acquire:
+
+```bash
+local caller_holds_lock=0
+if [[ "${_BUDDY_SAVE_LOCK_HELD:-}" == "1" ]]; then
+  caller_holds_lock=1
+fi
+
+local lock_fd=""
+if (( caller_holds_lock == 0 )); then
+  [[ -L "$lock_file" ]] && { _state_log "..."; return 1; }
+  exec {lock_fd}>"$lock_file" || { _state_log "..."; return 1; }
+  flock -x -w "$FLOCK_TIMEOUT" "$lock_fd" || {
+    exec {lock_fd}>&-; _state_log "..."; return 1;
+  }
+fi
+# ...tmp + rename unchanged...
+[[ -n "$lock_fd" ]] && exec {lock_fd}>&-
+```
+
+The caller (a hook) sets `_BUDDY_SAVE_LOCK_HELD=1` as a `local`
+before the pipe and clears it right after. The subshell that pipes
+into `buddy_save` inherits the caller's shell variables, so
+`export` is unnecessary and would leak into unrelated children.
+Non-hook callers (slash commands, reset) leave the var unset and
+get the library-level flock as before. See
+[bash-nested-caller-held-flocks-2026-04-23](./bash-nested-caller-held-flocks-2026-04-23.md)
+for the full multi-resource discipline.
 
 **Guard empty stdin explicitly before writing.** `jq` produces empty output on empty stdin; `printf` then writes a bare newline — silent corruption.
 
