@@ -145,11 +145,10 @@ SPECIES_FILES=(
   done
 }
 
-@test "species: P4-4 sprite.base is non-empty (real baked art ships)" {
-  # Post-P4-4, no species should ship with an empty sprite — the bake
-  # populates every one. Third-party species remain free to ship empty
-  # arrays and hit the fallback box; this assert only covers shipped
-  # launch species.
+@test "species: P4-4 sprite.base is non-empty (real art ships)" {
+  # Every shipped species has hand-authored straight-ASCII art. Third-party
+  # species remain free to ship empty arrays and hit the fallback box; this
+  # assert only covers shipped launch species.
   for f in "${SPECIES_FILES[@]}"; do
     local n
     n="$(jq -r '.sprite.base | length' "$f")"

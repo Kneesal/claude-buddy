@@ -29,8 +29,8 @@ setup_file() {
   [[ "$output" == *"v"* ]]
   # Placeholder voice line — Interact bank still empty (D9); only sprite content shipped.
   [[ "$output" == *"Custard looks at you curiously."* ]]
-  # Baked-sprite content (P4-4): full-block glyph present in every species.
-  [[ "$output" == *"█"* ]]
+  # Hand-authored ASCII sprite (P4-4b): axolotl's distinctive tummy seam.
+  [[ "$output" == *'\ \_/ /'* ]]
 }
 
 @test "interact: NO_COLOR=1 strips ANSI escapes" {

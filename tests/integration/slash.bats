@@ -293,10 +293,11 @@ JSON
   [[ "$output" == *"axolotl"* ]]
   [[ "$output" == *"Lv.1"* ]]
   [[ "$output" == *"base form"* ]]
-  # Sprite content — baked via chafa (P4-4). Full-block glyph █ appears in
-  # every species' baked sprite; asserting its presence confirms the sprite
-  # pipeline ran without pinning a brittle axolotl-specific substring.
-  [[ "$output" == *"█"* ]]
+  # Sprite content — hand-authored straight ASCII (P4-4b). Seed 42 pins
+  # axolotl; its sprite's third line is `  \ \_/ /  ` which reads as the
+  # tummy seam. Pins sprite rendering without being brittle to small
+  # aesthetic tweaks.
+  [[ "$output" == *'\ \_/ /'* ]]
   # XP bar — label and the next-level hint
   [[ "$output" == *"XP"* ]]
   [[ "$output" == *"0/100"* ]]
