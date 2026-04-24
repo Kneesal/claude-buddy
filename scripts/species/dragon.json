@@ -253,7 +253,19 @@
         "level up. consequences to follow",
         "the dragon bar goes up one"
       ]
+    },
+    "Interact": {
+      "default": []
     }
   },
-  "sprite": null
+  "sprite": {
+    "base": [
+      "    🬦🬱🬞🬏🬞🬓    ",
+      " 🬭🬹🬺🬵████🬲🬷🬹🬭 ",
+      " 🬊🬬████████🬝🬎 ",
+      "   🬉██████▌   ",
+      "    🬊████🬆    ",
+      "      🬁🬂      "
+    ]
+  }
 }

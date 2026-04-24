@@ -1,14 +1,28 @@
 ---
-description: Talk to your coding buddy and see what they have to say
+description: Check in with your buddy — renders the sprite plus a short speech bubble line. Read-only; no XP, no cooldowns, no commentary-budget cost.
 disable-model-invocation: true
 ---
 
 # Interact
 
-You are the Buddy plugin's interact command.
+You are the Buddy plugin's interact command. The user typed `/buddy:interact`.
 
-Check if the user has a buddy by looking for a buddy state file at `${CLAUDE_PLUGIN_DATA}/buddy.json`.
+All real logic lives in `scripts/interact.sh`. Your only job is to dispatch to it and relay the output.
 
-If no buddy exists, tell the user: "You don't have a buddy yet! Run `/buddy:hatch` to hatch one."
+## Dispatch
 
-If a buddy exists, greet the user in character as their buddy. (Full interaction system coming soon.)
+Run:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/interact.sh"
+```
+
+If `${CLAUDE_PLUGIN_ROOT}` is unset or the path doesn't exist, fall back to locating `scripts/interact.sh` relative to this plugin's installation (search upward from this SKILL.md's directory until you find it).
+
+This command takes no arguments — ignore any extra tokens in the user's message.
+
+## Output
+
+Relay the script's stdout back to the user **verbatim**, as the buddy's voice. Don't rephrase, summarize, or add commentary.
+
+If the script exits non-zero, also surface its stderr so the user can see what broke.

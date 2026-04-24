@@ -134,3 +134,76 @@ SPECIES_FILES=(
     [ -n "$emoji" ] || { echo "$f: missing emoji"; return 1; }
   done
 }
+
+@test "species: P4-3 sprite.base is an array of strings" {
+  for f in "${SPECIES_FILES[@]}"; do
+    run jq -e '.sprite.base | type == "array"' "$f"
+    [ "$status" -eq 0 ] || { echo "$f: sprite.base missing or not an array"; return 1; }
+    local bad
+    bad="$(jq -r '[.sprite.base[] | select(type != "string")] | length' "$f")"
+    [ "$bad" = "0" ] || { echo "$f: $bad non-string entries in sprite.base"; return 1; }
+  done
+}
+
+@test "species: P4-4 sprite.base is non-empty (real baked art ships)" {
+  # Post-P4-4, no species should ship with an empty sprite — the bake
+  # populates every one. Third-party species remain free to ship empty
+  # arrays and hit the fallback box; this assert only covers shipped
+  # launch species.
+  for f in "${SPECIES_FILES[@]}"; do
+    local n
+    n="$(jq -r '.sprite.base | length' "$f")"
+    [ "$n" -ge 3 ] || { echo "$f: sprite.base has only $n lines"; return 1; }
+  done
+}
+
+@test "species: P4-4 sprite.base lines are <=20 visible chars and <=10 lines" {
+  # Matches the render.sh contract. A wider sprite triggers the fallback
+  # box; a taller sprite gets truncated at 10.
+  for f in "${SPECIES_FILES[@]}"; do
+    local n
+    n="$(jq -r '.sprite.base | length' "$f")"
+    [ "$n" -le 10 ] || { echo "$f: sprite.base has $n lines (max 10)"; return 1; }
+    # Count codepoints per line via python3 — bash ${#s} is byte-count.
+    local overflow
+    overflow="$(jq -r '.sprite.base[]' "$f" | python3 -c '
+import sys
+for i, line in enumerate(sys.stdin.read().splitlines(), 1):
+    if len(line) > 20:
+        print(f"line {i}: {len(line)} chars")
+')"
+    [ -z "$overflow" ] || { echo "$f: $overflow"; return 1; }
+  done
+}
+
+@test "species: P4-4 sprite.base contains no embedded ANSI escape sequences" {
+  # Baked sprites must be Unicode-only. ANSI color is applied by render.sh
+  # at render time, so embedding it here would fight the rarity wrap and
+  # break the NO_COLOR strip.
+  for f in "${SPECIES_FILES[@]}"; do
+    local hits
+    hits="$(jq -r '[.sprite.base[] | select(test("\\u001b"))] | length' "$f")"
+    [ "$hits" = "0" ] || { echo "$f: $hits sprite lines contain ANSI escapes"; return 1; }
+  done
+}
+
+@test "species: P4-3 line_banks.Interact.default is an array of strings" {
+  for f in "${SPECIES_FILES[@]}"; do
+    run jq -e '.line_banks.Interact.default | type == "array"' "$f"
+    [ "$status" -eq 0 ] || { echo "$f: Interact.default missing or not an array"; return 1; }
+    local bad
+    bad="$(jq -r '[.line_banks.Interact.default[] | select(type != "string")] | length' "$f")"
+    [ "$bad" = "0" ] || { echo "$f: $bad non-string entries in Interact.default"; return 1; }
+  done
+}
+
+@test "species: P4-3 sprite + Interact strings are control-byte-free" {
+  for f in "${SPECIES_FILES[@]}"; do
+    local hits
+    hits="$(jq -r '
+      [ (.sprite.base // [])[], (.line_banks.Interact.default // [])[]
+        | select(test("[\t\n\r]")) ] | length
+    ' "$f")"
+    [ "$hits" = "0" ] || { echo "$f: $hits sprite/Interact strings contain control bytes"; return 1; }
+  done
+}

@@ -283,28 +283,64 @@ JSON
   [[ "$output" == *"/buddy:hatch"* ]]
 }
 
-@test "status: ACTIVE renders name, species, rarity, level, stats, tokens" {
+@test "status: ACTIVE renders P4-3 menu — sprite, header, XP bar, stat bars, signals, footer" {
   _seed_hatch
-  run --separate-stderr bash "$STATUS_SH"
+  NO_COLOR=1 run --separate-stderr bash "$STATUS_SH"
   [ "$status" -eq 0 ]
-  # With seed 42, first hatch rolls axolotl/common/Custard (pinned in seed-determinism test).
+  # Header (seed 42 -> axolotl/common/Custard)
   [[ "$output" == *"Custard"* ]]
   [[ "$output" == *"Common"* ]]
   [[ "$output" == *"axolotl"* ]]
   [[ "$output" == *"Lv.1"* ]]
   [[ "$output" == *"base form"* ]]
-  [[ "$output" == *"Stats: debugging"* ]]
+  # Sprite content — baked via chafa (P4-4). Full-block glyph █ appears in
+  # every species' baked sprite; asserting its presence confirms the sprite
+  # pipeline ran without pinning a brittle axolotl-specific substring.
+  [[ "$output" == *"█"* ]]
+  # XP bar — label and the next-level hint
+  [[ "$output" == *"XP"* ]]
+  [[ "$output" == *"0/100"* ]]
+  [[ "$output" == *"Lv.2 in 100"* ]]
+  [[ "$output" == *"░"* ]]
+  # Five rarity-stat bars
+  [[ "$output" == *"debugging"* ]]
   [[ "$output" == *"patience"* ]]
-  [[ "$output" == *"Tokens: 0"* ]]
-  [[ "$output" == *"XP: 0 / 100"* ]]
+  [[ "$output" == *"chaos"* ]]
+  [[ "$output" == *"wisdom"* ]]
+  [[ "$output" == *"snark"* ]]
+  # Signals glyph strip
+  [[ "$output" == *"🔥"* ]]
+  [[ "$output" == *"🧰"* ]]
+  [[ "$output" == *"✓"* ]]
+  [[ "$output" == *"⚡"* ]]
+  [[ "$output" == *"🪙"* ]]
+  # Footer with related-command pointers
+  [[ "$output" == *"/buddy:interact"* ]]
+  [[ "$output" == *"/buddy:install-statusline"* ]]
+  [[ "$output" == *"/buddy:hatch --confirm"* ]]
 }
 
-@test "status: ACTIVE with injected tokens reflects the new balance" {
+@test "status: ACTIVE with injected tokens reflects the new balance in signal strip" {
   _seed_hatch
   _inject_tokens 7
+  NO_COLOR=1 run --separate-stderr bash "$STATUS_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"🪙 7"* ]]
+}
+
+@test "status: ACTIVE NO_COLOR strips every ANSI escape" {
+  _seed_hatch
+  NO_COLOR=1 run --separate-stderr bash "$STATUS_SH"
+  [ "$status" -eq 0 ]
+  ! [[ "$output" == *$'\033'* ]]
+}
+
+@test "status: ACTIVE without NO_COLOR includes ANSI escapes" {
+  _seed_hatch
+  unset NO_COLOR
   run --separate-stderr bash "$STATUS_SH"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Tokens: 7"* ]]
+  [[ "$output" == *$'\033'* ]]
 }
 
 @test "status: CORRUPT prints repair pointer" {

@@ -252,7 +252,19 @@
         "progression. cold and quiet.",
         "level achieved. very quietly."
       ]
+    },
+    "Interact": {
+      "default": []
     }
   },
-  "sprite": null
+  "sprite": {
+    "base": [
+      "   🬵🬹████🬺🬱   ",
+      "  🬷████████🬺  ",
+      " 🬭██████████🬭 ",
+      " 🬂██████████🬂 ",
+      "  🬬█████████  ",
+      "  🬁🬂🬂🬁🬂🬂🬂🬂🬂🬀  "
+    ]
+  }
 }

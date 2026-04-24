@@ -252,7 +252,19 @@
         "level up: most satisfactory, quietly",
         "proceeding to the next stratum, as written"
       ]
+    },
+    "Interact": {
+      "default": []
     }
   },
-  "sprite": null
+  "sprite": {
+    "base": [
+      "   🬇🬣🬞🬭🬭🬭▐🬌   ",
+      "   🬞🬸███🬸█🬱   ",
+      "  🬞████████🬓  ",
+      "  🬁████████🬄  ",
+      "   🬁██████🬆   ",
+      "     🬁🬂🬂🬂     "
+    ]
+  }
 }
