@@ -206,6 +206,51 @@ EOF
   ! [[ "$output" == *$'\033'* ]]
 }
 
+@test "render_sprite_or_fallback: no-hat renders 12-space reserved row 1" {
+  # P4-4d — every buddy without a hat gets a blank reserved top row so the
+  # rendered height is a stable 5 rows across hatted/un-hatted buddies.
+  fixture="$BATS_TEST_TMPDIR/face.json"
+  _make_species_fixture "$fixture" "🦎" '["row2","row3","row4","row5"]'
+  NO_COLOR=1 run render_sprite_or_fallback "$fixture" common 0 ""
+  [ "$status" -eq 0 ]
+  # First line should be exactly 12 spaces.
+  first="$(printf '%s\n' "$output" | head -1)"
+  [ "$first" = "            " ]
+}
+
+@test "render_sprite_or_fallback: hat name prepends the hat sprite on row 1" {
+  # Write a fixture hat library and point BUDDY_SPECIES_DIR at it.
+  fixture_dir="$BATS_TEST_TMPDIR/hat-fx"
+  mkdir -p "$fixture_dir"
+  cat > "$fixture_dir/_hats.json" <<'JSON'
+{"schemaVersion":1,"hats":{"crown":"   \\^^^/    ","tophat":"   [___]    "}}
+JSON
+  cat > "$fixture_dir/widget.json" <<'JSON'
+{"schemaVersion":1,"species":"widget","emoji":"🤖","sprite":{"base":["A","B","C","D"]}}
+JSON
+  BUDDY_SPECIES_DIR="$fixture_dir" NO_COLOR=1 run render_sprite_or_fallback \
+    "$fixture_dir/widget.json" common 0 crown
+  [ "$status" -eq 0 ]
+  first="$(printf '%s\n' "$output" | head -1)"
+  [[ "$first" == *'\^^^/'* ]]
+}
+
+@test "render_sprite_or_fallback: unknown hat name falls back to blank reserved row" {
+  fixture_dir="$BATS_TEST_TMPDIR/hat-miss"
+  mkdir -p "$fixture_dir"
+  cat > "$fixture_dir/_hats.json" <<'JSON'
+{"schemaVersion":1,"hats":{"crown":"   \\^^^/    "}}
+JSON
+  cat > "$fixture_dir/widget.json" <<'JSON'
+{"schemaVersion":1,"species":"widget","emoji":"🤖","sprite":{"base":["A","B","C","D"]}}
+JSON
+  BUDDY_SPECIES_DIR="$fixture_dir" NO_COLOR=1 run render_sprite_or_fallback \
+    "$fixture_dir/widget.json" common 0 "totally-not-a-hat"
+  [ "$status" -eq 0 ]
+  first="$(printf '%s\n' "$output" | head -1)"
+  [ "$first" = "            " ]
+}
+
 @test "render_sprite_or_fallback: shiny prepends sparkle glyph" {
   fixture="$BATS_TEST_TMPDIR/empty.json"
   _make_species_fixture "$fixture" "🦎" "[]"

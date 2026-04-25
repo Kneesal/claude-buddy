@@ -46,9 +46,12 @@ _hatch_compose_first_envelope() {
   now="$(_hatch_now_utc)"
   local signals
   signals="$(signals_skeleton)"
+  local cosmetics
+  cosmetics="$(_hatch_roll_cosmetics "$inner")"
   jq -n -c \
     --argjson buddy "$inner" \
     --argjson signals "$signals" \
+    --argjson cosmetics "$cosmetics" \
     --arg hatchedAt "$now" \
     --arg windowStartedAt "$now" \
     --argjson pityCounter "$next_pity" \
@@ -56,7 +59,7 @@ _hatch_compose_first_envelope() {
       schemaVersion: 1,
       hatchedAt: $hatchedAt,
       lastRerollAt: null,
-      buddy: ($buddy + {signals: $signals}),
+      buddy: ($buddy + {signals: $signals, cosmetics: $cosmetics}),
       tokens: {
         balance: 0,
         earnedToday: 0,
@@ -67,6 +70,30 @@ _hatch_compose_first_envelope() {
         pityCounter: $pityCounter
       }
     }'
+}
+
+# _hatch_roll_cosmetics <inner_buddy_json>
+#
+# Returns a cosmetics JSON object on stdout. Today that's just {hat: "name"} or
+# {hat: null}. 40% hat-roll for non-common rarities; commons never roll a hat
+# (keeps the visual "this one's special" signal crisp, matching the reference
+# aesthetic's hat-gating convention).
+_hatch_roll_cosmetics() {
+  local inner="$1"
+  local rarity
+  rarity="$(printf '%s' "$inner" | jq -r '.rarity' 2>/dev/null)"
+  if [[ "$rarity" == "common" ]]; then
+    printf '{"hat": null}'
+    return 0
+  fi
+  # 40% roll. $RANDOM is seedable via BUDDY_RNG_SEED in tests; not using
+  # rng.sh's public API here because that's reserved for species/stats rolls.
+  local roll=$(( RANDOM % 100 ))
+  if (( roll < 40 )); then
+    printf '{"hat": "crown"}'
+  else
+    printf '{"hat": null}'
+  fi
 }
 
 # Compose the reroll envelope. Reads existing envelope from $1, new inner from
@@ -88,14 +115,18 @@ _hatch_compose_reroll_envelope() {
   # means the new buddy starts fresh). The new inner object does not
   # carry signals (rng.sh defers shape ownership to P4-1), so bake the
   # skeleton in here alongside the wholesale .buddy replacement.
+  # P4-4d: cosmetics re-roll per new rarity (same rules as first hatch).
+  local cosmetics
+  cosmetics="$(_hatch_roll_cosmetics "$inner")"
   printf '%s' "$existing" | jq -c \
     --argjson buddy "$inner" \
     --argjson signals "$signals" \
+    --argjson cosmetics "$cosmetics" \
     --arg lastRerollAt "$now" \
     --argjson pityCounter "$next_pity" \
     --argjson cost "$cost" \
     '.lastRerollAt = $lastRerollAt
-     | .buddy = ($buddy + {signals: $signals})
+     | .buddy = ($buddy + {signals: $signals, cosmetics: $cosmetics})
      | .tokens.balance = (.tokens.balance - $cost)
      | .meta.totalHatches = (.meta.totalHatches + 1)
      | .meta.pityCounter = $pityCounter'

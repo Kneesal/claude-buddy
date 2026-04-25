@@ -18,6 +18,18 @@ setup_file() {
 # hatch.sh — NO_BUDDY (first hatch)
 # ============================================================
 
+@test "hatch: first hatch common buddy never rolls a hat" {
+  # P4-4d cosmetics rule: commons always get cosmetics.hat = null. Seed 42
+  # pins axolotl/common, so this must hold.
+  BUDDY_RNG_SEED=42 run --separate-stderr bash "$HATCH_SH"
+  [ "$status" -eq 0 ]
+  local rarity hat
+  rarity="$(jq -r '.buddy.rarity' "$CLAUDE_PLUGIN_DATA/buddy.json")"
+  hat="$(jq -r '.buddy.cosmetics.hat' "$CLAUDE_PLUGIN_DATA/buddy.json")"
+  [ "$rarity" = "common" ]
+  [ "$hat" = "null" ]
+}
+
 @test "hatch: first hatch on NO_BUDDY creates a valid envelope" {
   run --separate-stderr bash "$HATCH_SH"
   [ "$status" -eq 0 ]
@@ -293,11 +305,9 @@ JSON
   [[ "$output" == *"axolotl"* ]]
   [[ "$output" == *"Lv.1"* ]]
   [[ "$output" == *"base form"* ]]
-  # Sprite content — hand-authored straight ASCII (P4-4b). Seed 42 pins
-  # axolotl; its sprite's third line is `  \ \_/ /  ` which reads as the
-  # tummy seam. Pins sprite rendering without being brittle to small
-  # aesthetic tweaks.
-  [[ "$output" == *'\ \_/ /'* ]]
+  # Sprite content — 5x12 face-only (P4-4d). Seed 42 pins axolotl; its
+  # distinctive eye row carries the parens+dots frame.
+  [[ "$output" == *'( ·    · )'* ]]
   # XP bar — label and the next-level hint
   [[ "$output" == *"XP"* ]]
   [[ "$output" == *"0/100"* ]]

@@ -275,19 +275,19 @@ JSON
   [ -f "$SPECIES_DIR/ghost.json" ]
   [ -f "$SPECIES_DIR/capybara.json" ]
   local count
-  count=$(find "$SPECIES_DIR" -maxdepth 1 -name '*.json' -type f | wc -l)
+  count=$(find "$SPECIES_DIR" -maxdepth 1 -name '[a-z]*.json' -type f | wc -l)
   [ "$count" -eq 5 ]
 }
 
 @test "species data: each file is valid JSON" {
-  for f in "$SPECIES_DIR"/*.json; do
+  for f in "$SPECIES_DIR"/[a-z]*.json; do
     run jq -e '.' "$f"
     [ "$status" -eq 0 ] || { echo "invalid JSON: $f"; return 1; }
   done
 }
 
 @test "species data: each file has required top-level keys" {
-  for f in "$SPECIES_DIR"/*.json; do
+  for f in "$SPECIES_DIR"/[a-z]*.json; do
     run jq -e '
       has("schemaVersion") and
       has("species") and
@@ -303,7 +303,7 @@ JSON
 }
 
 @test "species data: species field matches filename for every file" {
-  for f in "$SPECIES_DIR"/*.json; do
+  for f in "$SPECIES_DIR"/[a-z]*.json; do
     local basename species_field
     basename=$(basename "$f" .json)
     species_field=$(jq -r '.species' "$f")
@@ -312,7 +312,7 @@ JSON
 }
 
 @test "species data: base_stats_weights covers all 5 stats with exactly one peak-prefer and one dump-prefer" {
-  for f in "$SPECIES_DIR"/*.json; do
+  for f in "$SPECIES_DIR"/[a-z]*.json; do
     run jq -e '
       .base_stats_weights
       | (has("debugging") and has("patience") and has("chaos") and has("wisdom") and has("snark"))
@@ -326,7 +326,7 @@ JSON
 }
 
 @test "species data: peak-prefer stat differs from dump-prefer stat" {
-  for f in "$SPECIES_DIR"/*.json; do
+  for f in "$SPECIES_DIR"/[a-z]*.json; do
     local peak dump
     peak=$(jq -r '.base_stats_weights | to_entries | map(select(.value == "peak-prefer"))[0].key' "$f")
     dump=$(jq -r '.base_stats_weights | to_entries | map(select(.value == "dump-prefer"))[0].key' "$f")
@@ -335,7 +335,7 @@ JSON
 }
 
 @test "species data: name_pool has >= 20 unique non-empty strings per file" {
-  for f in "$SPECIES_DIR"/*.json; do
+  for f in "$SPECIES_DIR"/[a-z]*.json; do
     run jq -e '
       (.name_pool | length) >= 20
       and (.name_pool | all(type == "string" and length > 0))

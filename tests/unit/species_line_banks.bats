@@ -156,19 +156,19 @@ SPECIES_FILES=(
   done
 }
 
-@test "species: P4-4 sprite.base lines are <=20 visible chars and <=10 lines" {
-  # Matches the render.sh contract. A wider sprite triggers the fallback
-  # box; a taller sprite gets truncated at 10.
+@test "species: P4-4d sprite.base is 4 rows, <=12 visible chars per row" {
+  # 5x12 grid per the shipped aesthetic (P4-4d). Species store 4 face rows
+  # (rows 2-5); row 1 is composed at render time as hat overlay or blank
+  # reserved row. A wider or taller sprite drifts from the reference style.
   for f in "${SPECIES_FILES[@]}"; do
     local n
     n="$(jq -r '.sprite.base | length' "$f")"
-    [ "$n" -le 10 ] || { echo "$f: sprite.base has $n lines (max 10)"; return 1; }
-    # Count codepoints per line via python3 — bash ${#s} is byte-count.
+    [ "$n" = "4" ] || { echo "$f: sprite.base has $n lines (expected 4)"; return 1; }
     local overflow
     overflow="$(jq -r '.sprite.base[]' "$f" | python3 -c '
 import sys
 for i, line in enumerate(sys.stdin.read().splitlines(), 1):
-    if len(line) > 20:
+    if len(line) > 12:
         print(f"line {i}: {len(line)} chars")
 ')"
     [ -z "$overflow" ] || { echo "$f: $overflow"; return 1; }

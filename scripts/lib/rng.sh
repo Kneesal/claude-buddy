@@ -330,9 +330,11 @@ roll_species() {
       return 1
     fi
     local f
+    # Exclude underscore-prefixed JSONs — those are shared data files
+    # (_hats.json, future _accessories.json, etc.), not species.
     while IFS= read -r f; do
       _RNG_SPECIES_LIST+=("$(basename "$f" .json)")
-    done < <(find "$dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null | sort)
+    done < <(find "$dir" -maxdepth 1 -name '*.json' -type f -not -name '_*' 2>/dev/null | sort)
   fi
   local count="${#_RNG_SPECIES_LIST[@]}"
   if (( count == 0 )); then
