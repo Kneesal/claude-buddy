@@ -218,6 +218,31 @@ EOF
   [ "$first" = "            " ]
 }
 
+@test "render_sprite_or_fallback: {EYE} marker is substituted with provided eye glyph" {
+  fixture_dir="$BATS_TEST_TMPDIR/eye-fx"
+  mkdir -p "$fixture_dir"
+  cat > "$fixture_dir/widget.json" <<'JSON'
+{"schemaVersion":1,"species":"widget","emoji":"🤖","sprite":{"base":["( {EYE} {EYE} )","row3","row4","row5"]}}
+JSON
+  BUDDY_SPECIES_DIR="$fixture_dir" NO_COLOR=1 run render_sprite_or_fallback \
+    "$fixture_dir/widget.json" common 0 "" "*"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'( * * )'* ]]
+  ! [[ "$output" == *'{EYE}'* ]]
+}
+
+@test "render_sprite_or_fallback: missing eye arg defaults to · marker" {
+  fixture_dir="$BATS_TEST_TMPDIR/eye-default"
+  mkdir -p "$fixture_dir"
+  cat > "$fixture_dir/widget.json" <<'JSON'
+{"schemaVersion":1,"species":"widget","emoji":"🤖","sprite":{"base":["{EYE}{EYE}","row3","row4","row5"]}}
+JSON
+  BUDDY_SPECIES_DIR="$fixture_dir" NO_COLOR=1 run render_sprite_or_fallback \
+    "$fixture_dir/widget.json" common 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'··'* ]]
+}
+
 @test "render_sprite_or_fallback: hat name prepends the hat sprite on row 1" {
   # Write a fixture hat library and point BUDDY_SPECIES_DIR at it.
   fixture_dir="$BATS_TEST_TMPDIR/hat-fx"

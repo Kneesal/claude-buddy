@@ -74,26 +74,58 @@ _hatch_compose_first_envelope() {
 
 # _hatch_roll_cosmetics <inner_buddy_json>
 #
-# Returns a cosmetics JSON object on stdout. Today that's just {hat: "name"} or
-# {hat: null}. 40% hat-roll for non-common rarities; commons never roll a hat
-# (keeps the visual "this one's special" signal crisp, matching the reference
-# aesthetic's hat-gating convention).
+# Returns a cosmetics JSON object on stdout: {eye: "<glyph>", hat: "<name>"|null}.
+#
+# Eye: uniformly picked from the buddy's species.eye_pool. Every buddy gets
+# an eye glyph — that's the "this is MY axolotl" personality signal.
+#
+# Hat: 40% roll for non-common rarities; commons never roll a hat. Hat name
+# picked uniformly from the shared hat pool resolved via the species dir.
+# Commons getting no hats keeps the rarity signal crisp.
 _hatch_roll_cosmetics() {
   local inner="$1"
-  local rarity
+  local rarity species
   rarity="$(printf '%s' "$inner" | jq -r '.rarity' 2>/dev/null)"
-  if [[ "$rarity" == "common" ]]; then
-    printf '{"hat": null}'
-    return 0
+  species="$(printf '%s' "$inner" | jq -r '.species' 2>/dev/null)"
+
+  # --- Eye roll -----------------------------------------------------------
+  # Resolve the species file to read its eye_pool. Honors BUDDY_SPECIES_DIR
+  # for fixture tests; falls back to the plugin's species dir.
+  local species_dir species_file eye='·'
+  species_dir="${BUDDY_SPECIES_DIR:-$_HATCH_DIR/species}"
+  species_file="$species_dir/$species.json"
+  if [[ -f "$species_file" ]]; then
+    local pool_len
+    pool_len="$(jq -r '(.eye_pool // []) | length' "$species_file" 2>/dev/null)"
+    if [[ "$pool_len" =~ ^[0-9]+$ ]] && (( pool_len > 0 )); then
+      local idx=$(( RANDOM % pool_len ))
+      eye="$(jq -r --argjson i "$idx" '.eye_pool[$i]' "$species_file" 2>/dev/null)"
+      [[ -z "$eye" || "$eye" == "null" ]] && eye='·'
+    fi
   fi
-  # 40% roll. $RANDOM is seedable via BUDDY_RNG_SEED in tests; not using
-  # rng.sh's public API here because that's reserved for species/stats rolls.
-  local roll=$(( RANDOM % 100 ))
-  if (( roll < 40 )); then
-    printf '{"hat": "crown"}'
-  else
-    printf '{"hat": null}'
+
+  # --- Hat roll -----------------------------------------------------------
+  local hat_json='null'
+  if [[ "$rarity" != "common" ]]; then
+    local roll=$(( RANDOM % 100 ))
+    if (( roll < 40 )); then
+      local hats_file="$species_dir/_hats.json"
+      if [[ -f "$hats_file" ]]; then
+        local hat_count
+        hat_count="$(jq -r '.hats | length' "$hats_file" 2>/dev/null)"
+        if [[ "$hat_count" =~ ^[0-9]+$ ]] && (( hat_count > 0 )); then
+          local hidx=$(( RANDOM % hat_count ))
+          local hat_name
+          hat_name="$(jq -r --argjson i "$hidx" '.hats | keys | .[$i]' "$hats_file" 2>/dev/null)"
+          if [[ -n "$hat_name" && "$hat_name" != "null" ]]; then
+            hat_json="$(printf '"%s"' "$hat_name")"
+          fi
+        fi
+      fi
+    fi
   fi
+
+  printf '{"eye": "%s", "hat": %s}' "$eye" "$hat_json"
 }
 
 # Compose the reroll envelope. Reads existing envelope from $1, new inner from

@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "hats": {
-    "crown": "   \\^^^/    "
+    "crown":      "   \\^^^/    ",
+    "antlers":    "  (Y)  (Y)  ",
+    "flame":      "   *^*^*    ",
+    "headphones": "   n___n    ",
+    "bow":        "    <X>     ",
+    "flower":     "    @^@     ",
+    "stars":      "   * * *    "
   }
 }

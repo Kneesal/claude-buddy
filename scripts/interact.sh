@@ -53,7 +53,8 @@ _interact_render_active() {
     (.buddy.species | gsub("[\\n\\r\\t]"; " ")),
     (.buddy.rarity  | gsub("[\\n\\r\\t]"; " ")),
     (.buddy.shiny   // false | tostring),
-    (.buddy.cosmetics.hat // "")
+    (.buddy.cosmetics.hat // ""),
+    (.buddy.cosmetics.eye // "·")
   ' 2>/dev/null)"
   if [[ -z "$fields_raw" ]]; then
     echo "Buddy state needs repair. Run /buddy:reset or restore from backup."
@@ -64,6 +65,7 @@ _interact_render_active() {
   readarray -t parts <<< "$fields_raw"
   local name="${parts[0]}" species="${parts[1]}" rarity="${parts[2]}" shiny="${parts[3]:-false}"
   local hat_name="${parts[4]:-}"
+  local eye="${parts[5]:-·}"
   local shiny_flag=0
   [[ "$shiny" == "true" ]] && shiny_flag=1
 
@@ -89,7 +91,7 @@ _interact_render_active() {
   # Speech bubble first, then sprite below — D4 / deferred-question
   # pick: bubble-above-sprite reads cleaner than sprite-left at 80 cols.
   render_speech_bubble "$line" 40
-  printf '%s\n' "$(render_sprite_or_fallback "$species_file" "$rarity" "$shiny_flag" "$hat_name")"
+  printf '%s\n' "$(render_sprite_or_fallback "$species_file" "$rarity" "$shiny_flag" "$hat_name" "$eye")"
 }
 
 _interact_main() {

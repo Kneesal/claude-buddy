@@ -82,7 +82,8 @@ _status_render_active() {
     (.buddy.signals.chaos.errors             // 0 | tostring),
     (.buddy.signals.chaos.repeatedEditHits   // 0 | tostring),
     (.tokens.balance // 0 | tostring),
-    (.buddy.cosmetics.hat // "")
+    (.buddy.cosmetics.hat // ""),
+    (.buddy.cosmetics.eye // "·")
   ' 2>/dev/null)"
   if [[ -z "$fields_raw" ]]; then
     _status_render_repair
@@ -100,6 +101,7 @@ _status_render_active() {
   local errors="${parts[16]}" repeats="${parts[17]}"
   local balance="${parts[18]}"
   local hat_name="${parts[19]:-}"
+  local eye="${parts[20]:-·}"
 
   local rarity_disp="${rarity^}"
   local xp_ceiling
@@ -116,7 +118,7 @@ _status_render_active() {
   local species_file
   species_file="$(_status_species_file "$species")" || species_file=""
   local sprite
-  sprite="$(render_sprite_or_fallback "$species_file" "$rarity" "$shiny_flag" "$hat_name")"
+  sprite="$(render_sprite_or_fallback "$species_file" "$rarity" "$shiny_flag" "$hat_name" "$eye")"
   printf '%s\n' "$sprite"
 
   # Header line: name — Rarity species (Lv.N form)

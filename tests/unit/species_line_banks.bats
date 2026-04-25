@@ -135,6 +135,27 @@ SPECIES_FILES=(
   done
 }
 
+@test "species: P4-4d eye_pool is a non-empty array of single-char strings per species" {
+  for f in "${SPECIES_FILES[@]}"; do
+    run jq -e '.eye_pool | type == "array" and length >= 2' "$f"
+    [ "$status" -eq 0 ] || { echo "$f: eye_pool missing or too small"; return 1; }
+    local bad
+    bad="$(jq -r '[.eye_pool[] | select((type != "string") or (length != 1))] | length' "$f")"
+    [ "$bad" = "0" ] || { echo "$f: $bad eye_pool entries are non-single-char or non-string"; return 1; }
+  done
+}
+
+@test "species: P4-4d sprite.base contains the {EYE} substitution marker on at least one row" {
+  # Without the marker, the eye-pool roll has nowhere to land. Per-species
+  # placement still flexible (could be row 1 with antlers / row 2 with eyes /
+  # whatever) — just assert presence somewhere.
+  for f in "${SPECIES_FILES[@]}"; do
+    local hits
+    hits="$(jq -r '[.sprite.base[] | select(contains("{EYE}"))] | length' "$f")"
+    [ "$hits" -ge 1 ] || { echo "$f: no row contains the {EYE} marker"; return 1; }
+  done
+}
+
 @test "species: P4-3 sprite.base is an array of strings" {
   for f in "${SPECIES_FILES[@]}"; do
     run jq -e '.sprite.base | type == "array"' "$f"
@@ -156,10 +177,10 @@ SPECIES_FILES=(
   done
 }
 
-@test "species: P4-4d sprite.base is 4 rows, <=12 visible chars per row" {
+@test "species: P4-4d sprite.base is 4 rows, <=12 visible chars per row (post-{EYE} substitution)" {
   # 5x12 grid per the shipped aesthetic (P4-4d). Species store 4 face rows
-  # (rows 2-5); row 1 is composed at render time as hat overlay or blank
-  # reserved row. A wider or taller sprite drifts from the reference style.
+  # with literal {EYE} markers (5 stored chars, 1 rendered char). Validation
+  # measures rendered width — substitute then count codepoints.
   for f in "${SPECIES_FILES[@]}"; do
     local n
     n="$(jq -r '.sprite.base | length' "$f")"
@@ -168,8 +189,9 @@ SPECIES_FILES=(
     overflow="$(jq -r '.sprite.base[]' "$f" | python3 -c '
 import sys
 for i, line in enumerate(sys.stdin.read().splitlines(), 1):
-    if len(line) > 12:
-        print(f"line {i}: {len(line)} chars")
+    rendered = line.replace("{EYE}", "X")  # 1-char eye stand-in
+    if len(rendered) > 12:
+        print(f"line {i}: {len(rendered)} chars")
 ')"
     [ -z "$overflow" ] || { echo "$f: $overflow"; return 1; }
   done

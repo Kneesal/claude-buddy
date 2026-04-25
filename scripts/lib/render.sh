@@ -187,17 +187,19 @@ _render_hat_lookup() {
   jq -r --arg name "$hat_name" '.hats[$name] // ""' "$hats_file" 2>/dev/null
 }
 
-# render_sprite_or_fallback <species_json_path> <rarity> [shiny=0] [hat_name=""]
+# render_sprite_or_fallback <species_json_path> <rarity> [shiny=0] [hat_name=""] [eye=""]
 #
 # Renders a 5-row portrait:
 #   Row 1: hat sprite (if hat_name provided and resolves) OR blank reserved row
-#   Rows 2-5: sprite.base content from the species JSON
+#   Rows 2-5: sprite.base content from the species JSON, with {EYE} markers
+#             substituted by the per-buddy eye glyph if provided
 #
 # The 5x12 grid is the shipped convention (see P4-4d). Species JSONs store
-# 4 face rows; row 1 is composed at render time so accessories can be
-# swapped without re-baking the sprite.
+# 4 face rows with {EYE} placeholders; both row 1 and the eye glyph are
+# composed at render time so accessories and per-buddy eye style can be
+# swapped without re-baking the sprite. Defaults to · if no eye is provided.
 render_sprite_or_fallback() {
-  local path="${1:-}" rarity="${2:-common}" shiny="${3:-0}" hat_name="${4:-}"
+  local path="${1:-}" rarity="${2:-common}" shiny="${3:-0}" hat_name="${4:-}" eye="${5:-·}"
 
   local emoji="$_RENDER_FALLBACK_EMOJI"
   local sprite_lines=""
@@ -240,12 +242,15 @@ render_sprite_or_fallback() {
     printf '%s%s\n' "$sparkle" "$(_render_color_line "$hat_row" "$rarity")"
     sparkle=""  # sparkle only decorates the first emitted row
 
-    # Rows 2-N: face content, truncated to 10 lines as a runaway guard.
+    # Rows 2-N: face content with {EYE} substitution, truncated to 10 lines
+    # as a runaway guard. Substituting in shell parameter expansion is
+    # cheaper than spawning sed per line.
     local count=0
-    local line
+    local line rendered
     while IFS= read -r line; do
       (( count >= 10 )) && break
-      printf '%s\n' "$(_render_color_line "$line" "$rarity")"
+      rendered="${line//\{EYE\}/$eye}"
+      printf '%s\n' "$(_render_color_line "$rendered" "$rarity")"
       count=$(( count + 1 ))
     done <<< "$sprite_lines"
     return 0
