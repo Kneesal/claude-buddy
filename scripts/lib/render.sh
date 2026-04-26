@@ -230,17 +230,18 @@ render_sprite_or_fallback() {
   [[ "$shiny" == "1" || "$shiny" == "true" ]] && sparkle="✨ "
 
   if [[ -n "$sprite_lines" ]]; then
-    # Row 1: hat overlay or blank reserved row. Always emit exactly one row
-    # here so callers get a stable 5-row height regardless of cosmetics.
-    local hat_row=""
+    # Row 1: hat overlay, only emitted when a hat resolves. No blank
+    # placeholder row for hatless buddies — they render as a tight 4-row
+    # face. Hatted buddies render as 5 rows (hat + face). The visible
+    # height delta IS the "this buddy has a hat" signal.
     if [[ -n "$hat_name" ]]; then
+      local hat_row
       hat_row="$(_render_hat_lookup "$hat_name")"
+      if [[ -n "$hat_row" ]]; then
+        printf '%s%s\n' "$sparkle" "$(_render_color_line "$hat_row" "$rarity")"
+        sparkle=""  # sparkle only decorates the first emitted row
+      fi
     fi
-    if [[ -z "$hat_row" ]]; then
-      hat_row="            "  # 12-space blank reserved row
-    fi
-    printf '%s%s\n' "$sparkle" "$(_render_color_line "$hat_row" "$rarity")"
-    sparkle=""  # sparkle only decorates the first emitted row
 
     # Rows 2-N: face content with {EYE} substitution, truncated to 10 lines
     # as a runaway guard. Bash 5.0+ treats `&` in the replacement string of

@@ -206,16 +206,19 @@ EOF
   ! [[ "$output" == *$'\033'* ]]
 }
 
-@test "render_sprite_or_fallback: no-hat renders 12-space reserved row 1" {
-  # P4-4d — every buddy without a hat gets a blank reserved top row so the
-  # rendered height is a stable 5 rows across hatted/un-hatted buddies.
+@test "render_sprite_or_fallback: no-hat renders the face directly (no blank top row)" {
+  # P4-4d post-tighten — hatless buddies render as a tight 4-row face.
+  # The hat row is only emitted when a hat resolves; the visible height
+  # delta IS the 'this buddy has a hat' signal.
   fixture="$BATS_TEST_TMPDIR/face.json"
   _make_species_fixture "$fixture" "🦎" '["row2","row3","row4","row5"]'
   NO_COLOR=1 run render_sprite_or_fallback "$fixture" common 0 ""
   [ "$status" -eq 0 ]
-  # First line should be exactly 12 spaces.
+  # First emitted line is the first face row, NOT a 12-space placeholder.
   first="$(printf '%s\n' "$output" | head -1)"
-  [ "$first" = "            " ]
+  [ "$first" = "row2" ]
+  lines="$(printf '%s\n' "$output" | wc -l)"
+  [ "$lines" -eq 4 ]
 }
 
 @test "render_sprite_or_fallback: {EYE} marker is substituted with provided eye glyph" {
@@ -260,7 +263,9 @@ JSON
   [[ "$first" == *'\^^^/'* ]]
 }
 
-@test "render_sprite_or_fallback: unknown hat name falls back to blank reserved row" {
+@test "render_sprite_or_fallback: unknown hat name falls back to face only (no blank row)" {
+  # Same tightened contract as the no-hat case — a missing hat does not
+  # waste a blank line; the face renders directly.
   fixture_dir="$BATS_TEST_TMPDIR/hat-miss"
   mkdir -p "$fixture_dir"
   cat > "$fixture_dir/_hats.json" <<'JSON'
@@ -273,7 +278,9 @@ JSON
     "$fixture_dir/widget.json" common 0 "totally-not-a-hat"
   [ "$status" -eq 0 ]
   first="$(printf '%s\n' "$output" | head -1)"
-  [ "$first" = "            " ]
+  [ "$first" = "A" ]
+  lines="$(printf '%s\n' "$output" | wc -l)"
+  [ "$lines" -eq 4 ]
 }
 
 @test "render_sprite_or_fallback: shiny prepends sparkle glyph" {
