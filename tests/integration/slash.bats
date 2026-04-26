@@ -305,10 +305,10 @@ JSON
   [[ "$output" == *"axolotl"* ]]
   [[ "$output" == *"Lv.1"* ]]
   [[ "$output" == *"base form"* ]]
-  # Sprite content — 5x12 face-only (P4-4d). Seed 42 pins axolotl; its
-  # distinctive top row is the frilly gill fringe `~-~-~-~`. Asserting the
+  # Sprite content — 5x12 face-only (P4-4d v2). Seed 42 pins axolotl; its
+  # distinctive top row is the frilly gill fringe `<vvv-vvv>`. Asserting the
   # gill row stays robust across the per-buddy eye-glyph randomization.
-  [[ "$output" == *'~-~-~-~'* ]]
+  [[ "$output" == *'<vvv-vvv>'* ]]
   # XP bar — label and the next-level hint
   [[ "$output" == *"XP"* ]]
   [[ "$output" == *"0/100"* ]]
