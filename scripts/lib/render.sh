@@ -243,13 +243,15 @@ render_sprite_or_fallback() {
     sparkle=""  # sparkle only decorates the first emitted row
 
     # Rows 2-N: face content with {EYE} substitution, truncated to 10 lines
-    # as a runaway guard. Substituting in shell parameter expansion is
-    # cheaper than spawning sed per line.
+    # as a runaway guard. Bash 5.0+ treats `&` in the replacement string of
+    # ${var//pat/repl} as "the matched pattern" (sed-like). Escape the eye
+    # glyph defensively so an eye_pool containing `&` substitutes literally.
+    local eye_safe="${eye//&/\\&}"
     local count=0
     local line rendered
     while IFS= read -r line; do
       (( count >= 10 )) && break
-      rendered="${line//\{EYE\}/$eye}"
+      rendered="${line//\{EYE\}/$eye_safe}"
       printf '%s\n' "$(_render_color_line "$rendered" "$rarity")"
       count=$(( count + 1 ))
     done <<< "$sprite_lines"
