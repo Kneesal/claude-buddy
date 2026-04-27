@@ -1,7 +1,12 @@
 {
   "name": "buddy",
-  "version": "0.1.0",
+  "version": "0.0.9",
   "description": "Gacha-hatched, Tamagotchi-style evolving coding companion for Claude Code",
+  "author": {
+    "name": "Kneesal"
+  },
+  "repository": "https://github.com/Kneesal/claude-buddy",
+  "license": "MIT",
   "userConfig": {
     "commentsPerSession": {
       "type": "number",
