@@ -46,9 +46,12 @@ _hatch_compose_first_envelope() {
   now="$(_hatch_now_utc)"
   local signals
   signals="$(signals_skeleton)"
+  local cosmetics
+  cosmetics="$(_hatch_roll_cosmetics "$inner")"
   jq -n -c \
     --argjson buddy "$inner" \
     --argjson signals "$signals" \
+    --argjson cosmetics "$cosmetics" \
     --arg hatchedAt "$now" \
     --arg windowStartedAt "$now" \
     --argjson pityCounter "$next_pity" \
@@ -56,7 +59,7 @@ _hatch_compose_first_envelope() {
       schemaVersion: 1,
       hatchedAt: $hatchedAt,
       lastRerollAt: null,
-      buddy: ($buddy + {signals: $signals}),
+      buddy: ($buddy + {signals: $signals, cosmetics: $cosmetics}),
       tokens: {
         balance: 0,
         earnedToday: 0,
@@ -67,6 +70,62 @@ _hatch_compose_first_envelope() {
         pityCounter: $pityCounter
       }
     }'
+}
+
+# _hatch_roll_cosmetics <inner_buddy_json>
+#
+# Returns a cosmetics JSON object on stdout: {eye: "<glyph>", hat: "<name>"|null}.
+#
+# Eye: uniformly picked from the buddy's species.eye_pool. Every buddy gets
+# an eye glyph — that's the "this is MY axolotl" personality signal.
+#
+# Hat: 40% roll for non-common rarities; commons never roll a hat. Hat name
+# picked uniformly from the shared hat pool resolved via the species dir.
+# Commons getting no hats keeps the rarity signal crisp.
+_hatch_roll_cosmetics() {
+  local inner="$1"
+  local rarity species
+  rarity="$(printf '%s' "$inner" | jq -r '.rarity' 2>/dev/null)"
+  species="$(printf '%s' "$inner" | jq -r '.species' 2>/dev/null)"
+
+  # --- Eye roll -----------------------------------------------------------
+  # Resolve the species file to read its eye_pool. Honors BUDDY_SPECIES_DIR
+  # for fixture tests; falls back to the plugin's species dir.
+  local species_dir species_file eye='·'
+  species_dir="${BUDDY_SPECIES_DIR:-$_HATCH_DIR/species}"
+  species_file="$species_dir/$species.json"
+  if [[ -f "$species_file" ]]; then
+    local pool_len
+    pool_len="$(jq -r '(.eye_pool // []) | length' "$species_file" 2>/dev/null)"
+    if [[ "$pool_len" =~ ^[0-9]+$ ]] && (( pool_len > 0 )); then
+      local idx=$(( RANDOM % pool_len ))
+      eye="$(jq -r --argjson i "$idx" '.eye_pool[$i]' "$species_file" 2>/dev/null)"
+      [[ -z "$eye" || "$eye" == "null" ]] && eye='·'
+    fi
+  fi
+
+  # --- Hat roll -----------------------------------------------------------
+  local hat_json='null'
+  if [[ "$rarity" != "common" ]]; then
+    local roll=$(( RANDOM % 100 ))
+    if (( roll < 40 )); then
+      local hats_file="$species_dir/_hats.json"
+      if [[ -f "$hats_file" ]]; then
+        local hat_count
+        hat_count="$(jq -r '.hats | length' "$hats_file" 2>/dev/null)"
+        if [[ "$hat_count" =~ ^[0-9]+$ ]] && (( hat_count > 0 )); then
+          local hidx=$(( RANDOM % hat_count ))
+          local hat_name
+          hat_name="$(jq -r --argjson i "$hidx" '.hats | keys | .[$i]' "$hats_file" 2>/dev/null)"
+          if [[ -n "$hat_name" && "$hat_name" != "null" ]]; then
+            hat_json="$(printf '"%s"' "$hat_name")"
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  printf '{"eye": "%s", "hat": %s}' "$eye" "$hat_json"
 }
 
 # Compose the reroll envelope. Reads existing envelope from $1, new inner from
@@ -88,14 +147,18 @@ _hatch_compose_reroll_envelope() {
   # means the new buddy starts fresh). The new inner object does not
   # carry signals (rng.sh defers shape ownership to P4-1), so bake the
   # skeleton in here alongside the wholesale .buddy replacement.
+  # P4-4d: cosmetics re-roll per new rarity (same rules as first hatch).
+  local cosmetics
+  cosmetics="$(_hatch_roll_cosmetics "$inner")"
   printf '%s' "$existing" | jq -c \
     --argjson buddy "$inner" \
     --argjson signals "$signals" \
+    --argjson cosmetics "$cosmetics" \
     --arg lastRerollAt "$now" \
     --argjson pityCounter "$next_pity" \
     --argjson cost "$cost" \
     '.lastRerollAt = $lastRerollAt
-     | .buddy = ($buddy + {signals: $signals})
+     | .buddy = ($buddy + {signals: $signals, cosmetics: $cosmetics})
      | .tokens.balance = (.tokens.balance - $cost)
      | .meta.totalHatches = (.meta.totalHatches + 1)
      | .meta.pityCounter = $pityCounter'

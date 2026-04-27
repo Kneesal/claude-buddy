@@ -18,6 +18,18 @@ setup_file() {
 # hatch.sh — NO_BUDDY (first hatch)
 # ============================================================
 
+@test "hatch: first hatch common buddy never rolls a hat" {
+  # P4-4d cosmetics rule: commons always get cosmetics.hat = null. Seed 42
+  # pins axolotl/common, so this must hold.
+  BUDDY_RNG_SEED=42 run --separate-stderr bash "$HATCH_SH"
+  [ "$status" -eq 0 ]
+  local rarity hat
+  rarity="$(jq -r '.buddy.rarity' "$CLAUDE_PLUGIN_DATA/buddy.json")"
+  hat="$(jq -r '.buddy.cosmetics.hat' "$CLAUDE_PLUGIN_DATA/buddy.json")"
+  [ "$rarity" = "common" ]
+  [ "$hat" = "null" ]
+}
+
 @test "hatch: first hatch on NO_BUDDY creates a valid envelope" {
   run --separate-stderr bash "$HATCH_SH"
   [ "$status" -eq 0 ]
@@ -293,10 +305,10 @@ JSON
   [[ "$output" == *"axolotl"* ]]
   [[ "$output" == *"Lv.1"* ]]
   [[ "$output" == *"base form"* ]]
-  # Sprite content — baked via chafa (P4-4). Full-block glyph █ appears in
-  # every species' baked sprite; asserting its presence confirms the sprite
-  # pipeline ran without pinning a brittle axolotl-specific substring.
-  [[ "$output" == *"█"* ]]
+  # Sprite content — 5x12 face-only (P4-4d v2). Seed 42 pins axolotl; its
+  # distinctive top row is the frilly gill fringe `<vvv-vvv>`. Asserting the
+  # gill row stays robust across the per-buddy eye-glyph randomization.
+  [[ "$output" == *'<vvv-vvv>'* ]]
   # XP bar — label and the next-level hint
   [[ "$output" == *"XP"* ]]
   [[ "$output" == *"0/100"* ]]

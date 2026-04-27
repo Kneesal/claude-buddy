@@ -1,6 +1,6 @@
 ---
 id: P4-4
-title: Sprite content (chafa-baked portraits)
+title: Sprite content (hand-authored ASCII)
 phase: P4
 status: done
 depends_on: [P4-3]
@@ -11,66 +11,84 @@ origin_plan: docs/plans/2026-04-23-002-feat-p4-4-sprite-content-plan.md
 
 ## Goal
 
-Replace P4-3's placeholder hand-typed 5-line ASCII sprites with higher-fidelity
-Unicode-sextant portraits baked at contributor-time from per-species source
-PNGs via chafa, committed back into `scripts/species/*.json`.
+Replace P4-3's placeholder 5-line ASCII sprites with per-species art of
+higher craft. Two iterations landed in this ticket; the shipped form is
+iteration 2.
+
+## Iteration 1 (landed then reverted): chafa-baked Unicode sextant silhouettes
+
+- `scripts/art/source-sprites.py` deterministically drew 64×64 pixel-art
+  PNGs via PIL primitives.
+- `scripts/bake-sprites.sh` wrapped chafa (`--symbols=sextant --fg-only
+  --colors=256` + ANSI strip) and wrote Unicode-sextant silhouettes into
+  `.sprite.base`.
+- `assets/species/*.png` + `ATTRIBUTION.md` committed the CC0 source art.
+- Passed all structural validators and tests.
+
+**Reverted after user playtesting** — the sextant silhouettes lost too
+much personality in the 14×10 cell downsample. Recognizable shapes, no
+faces, no species voice. The pipeline worked; the aesthetic didn't.
+
+The sextant-bake pipeline is documented in
+`docs/solutions/developer-experience/chafa-sextant-sprite-bake-pipeline-2026-04-23.md`
+and remains a valid technique for plugins that want photo-like terminal
+art. This plugin opted out.
+
+## Iteration 2 (shipped): hand-authored 5×12 straight ASCII
+
+Each species in `scripts/species/<name>.json:.sprite.base` is a 5-line
+ASCII portrait ≤12 chars wide. No emoji. No Unicode blocks. Plain
+punctuation carrying every line:
+
+- axolotl — gills as `~`, oval body with `\_/` smile, little feet
+- dragon — wings flanking `(( >.< ))`, scales via `^^^^`
+- owl — tufted ears, `(O_O)` eyes, book-stand feet
+- ghost — rounded dome, wavy tail with `vvv`
+- capybara — stocky rectangle, sleepy eyes, chunky legs
 
 ## Tasks
 
-- [x] `scripts/art/source-sprites.py` — deterministic pixel-art generator,
-  one drawer per species. Contributor-authored via PIL primitives; CC0.
-- [x] `assets/species/*.png` — 5 × 64×64 pixel-art PNGs produced by the
-  generator, plus `assets/species/ATTRIBUTION.md`.
-- [x] `scripts/bake-sprites.sh` — chafa wrapper with locked flags, ANSI-strip
-  post-process, width/height/control-byte validation, atomic jq+rename
-  write-back into species JSONs. `--check` dry-run mode.
-- [x] `scripts/species/*.json` — `.sprite.base` arrays replaced with baked
-  Unicode-sextant silhouettes. Unicode-only (no embedded ANSI). Idempotent.
-- [x] `tests/unit/species_line_banks.bats` — new assertions: sprite.base
-  non-empty (≥3 lines), ≤10 lines, ≤20 visible chars per line, no embedded
-  ANSI escape sequences.
-- [x] `tests/integration/slash.bats` + `test_interact.bats` — assertions
-  retargeted from the old hand-typed "o v o" substring to the `█` full-block
-  glyph that appears in every baked sprite.
+- [x] Hand-author 5 species portraits, each 5 lines × ≤12 chars.
+- [x] Write into `scripts/species/<name>.json:.sprite.base`.
+- [x] Remove chafa pipeline: `scripts/bake-sprites.sh`,
+  `scripts/art/source-sprites.py`, `assets/`,
+  `tests/integration/test_bake_sprites.bats`.
+- [x] Update `tests/integration/slash.bats` + `test_interact.bats`
+  sprite-content assertion from `█` (sextant marker) to
+  `\ \_/ /` (axolotl's distinctive tummy seam).
+- [x] `tests/unit/species_line_banks.bats` P4-4 assertions stay
+  (non-empty, ≤10 lines, ≤20 chars, no embedded ANSI) — they're
+  format-agnostic.
 
 ## Exit criteria
 
-- All 5 species render visibly distinct Unicode-sextant silhouettes in
-  `/buddy:stats` and `/buddy:interact`.
-- Running `bash scripts/bake-sprites.sh` twice against unchanged source
-  PNGs produces no git diff.
-- Full test suite passes.
+- All 5 species render recognizable ASCII portraits with distinct faces
+  in `/buddy:stats` and `/buddy:interact`.
+- Full test suite green.
+- No chafa / PIL / pip dependency anywhere in the repo.
 
 ## Notes
 
-- **Why contributor-authored PIL art, not AI-generated:** no `GEMINI_API_KEY`
-  available in the session; swapping the source at build time doesn't change
-  the shape of the artifact (the baked sextant strings) so an AI-generated
-  upgrade can drop in as a follow-up by replacing `scripts/art/source-sprites.py`
-  with a downloader. The license trail is cleanest with fully contributor-
-  authored CC0 pixel art.
-- **Locked chafa flag set (D5):** `--size=14x10 --symbols=sextant --fg-only
-  --colors=256 --format=symbols --dither=none --color-space=din99d`. We emit
-  with `--colors=256` (not `--colors=none`) because that path correctly honors
-  source PNG transparency; the downstream sed strips ANSI so the committed
-  output is Unicode-only per D2.
-- **On-disk format (D2):** Unicode block characters only. `render.sh` applies
-  rarity color at render time on top of the silhouette. Preserves the
-  legendary-rainbow single-color fallback (P4-3 commit 3a24f1f) and the
-  `$NO_COLOR` strip.
-- **Validation is python3-backed** for codepoint-accurate width counting —
-  bash `${#s}` is byte-count and would over-report UTF-8 sextant glyphs.
+- **Why straight ASCII over sextant bake:** playtesting the sextant art
+  revealed that silhouettes without faces don't read as characters.
+  ASCII + clear eye placement carries more personality per character
+  than any pixel downsample at this cell budget.
+- **Source of the style cue:** investigation of Anthropic's unshipped
+  `/buddy` (leaked-source coverage only; not in the installed binary)
+  described ~5-line × ~12-char ASCII-with-emoji compositions. We took
+  the dimensions and tightness but dropped the emoji per user direction.
+- **Deferred to separate tickets:**
+  - Reactive / animated sprites → P4-5 (plan at
+    `docs/plans/2026-04-23-003-feat-p4-5-reactive-sprites-plan.md`).
+  - Hand-painted ANSI via Moebius for a future high-fidelity pass →
+    suggested P7-2, only if the ASCII baseline feels thin after live use.
+  - Teen / final form sprites → P4-2-form-transitions.
 
-### Implementation notes (2026-04-23)
+### Implementation notes (2026-04-24)
 
 - **Plan:** [docs/plans/2026-04-23-002-feat-p4-4-sprite-content-plan.md](../plans/2026-04-23-002-feat-p4-4-sprite-content-plan.md).
-- **Branch:** same as P4-3 (`feat/p4-3-visible-buddy`) — scope added to PR #8
-  per user request, rather than a separate PR.
-- **Tools installed:** chafa 1.14.0 (`apt install chafa`), PIL 12.2.0
-  (`pip install pillow --break-system-packages`).
-- **Deferred to separate tickets:**
-  - Moebius hand-painted ANSI track → P7-2-full-sprites if chafa output
-    proves too algorithmic after live use.
-  - Teen / final form sprites → P4-2-form-transitions.
-  - Reactive / animated sprites → P4-5 (plan written in parallel with this
-    ticket).
+  The plan's chafa-track is reflected in the reverted iteration 1; the
+  shipped form is what the plan called "iteration-time tuning."
+- **Branch:** `feat/p4-3-visible-buddy` — scope added to PR #8.
+- **Tools used for iteration 1 (now deleted):** chafa 1.14.0, PIL 12.2.0.
+- **Shipped art:** 100% hand-typed, no tooling required to reproduce.

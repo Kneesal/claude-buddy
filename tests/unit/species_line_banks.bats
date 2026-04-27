@@ -135,6 +135,27 @@ SPECIES_FILES=(
   done
 }
 
+@test "species: P4-4d eye_pool is a non-empty array of single-char strings per species" {
+  for f in "${SPECIES_FILES[@]}"; do
+    run jq -e '.eye_pool | type == "array" and length >= 2' "$f"
+    [ "$status" -eq 0 ] || { echo "$f: eye_pool missing or too small"; return 1; }
+    local bad
+    bad="$(jq -r '[.eye_pool[] | select((type != "string") or (length != 1))] | length' "$f")"
+    [ "$bad" = "0" ] || { echo "$f: $bad eye_pool entries are non-single-char or non-string"; return 1; }
+  done
+}
+
+@test "species: P4-4d sprite.base contains the {EYE} substitution marker on at least one row" {
+  # Without the marker, the eye-pool roll has nowhere to land. Per-species
+  # placement still flexible (could be row 1 with antlers / row 2 with eyes /
+  # whatever) — just assert presence somewhere.
+  for f in "${SPECIES_FILES[@]}"; do
+    local hits
+    hits="$(jq -r '[.sprite.base[] | select(contains("{EYE}"))] | length' "$f")"
+    [ "$hits" -ge 1 ] || { echo "$f: no row contains the {EYE} marker"; return 1; }
+  done
+}
+
 @test "species: P4-3 sprite.base is an array of strings" {
   for f in "${SPECIES_FILES[@]}"; do
     run jq -e '.sprite.base | type == "array"' "$f"
@@ -145,11 +166,10 @@ SPECIES_FILES=(
   done
 }
 
-@test "species: P4-4 sprite.base is non-empty (real baked art ships)" {
-  # Post-P4-4, no species should ship with an empty sprite — the bake
-  # populates every one. Third-party species remain free to ship empty
-  # arrays and hit the fallback box; this assert only covers shipped
-  # launch species.
+@test "species: P4-4 sprite.base is non-empty (real art ships)" {
+  # Every shipped species has hand-authored straight-ASCII art. Third-party
+  # species remain free to ship empty arrays and hit the fallback box; this
+  # assert only covers shipped launch species.
   for f in "${SPECIES_FILES[@]}"; do
     local n
     n="$(jq -r '.sprite.base | length' "$f")"
@@ -157,20 +177,21 @@ SPECIES_FILES=(
   done
 }
 
-@test "species: P4-4 sprite.base lines are <=20 visible chars and <=10 lines" {
-  # Matches the render.sh contract. A wider sprite triggers the fallback
-  # box; a taller sprite gets truncated at 10.
+@test "species: P4-4d sprite.base is 4 rows, <=12 visible chars per row (post-{EYE} substitution)" {
+  # 5x12 grid per the shipped aesthetic (P4-4d). Species store 4 face rows
+  # with literal {EYE} markers (5 stored chars, 1 rendered char). Validation
+  # measures rendered width — substitute then count codepoints.
   for f in "${SPECIES_FILES[@]}"; do
     local n
     n="$(jq -r '.sprite.base | length' "$f")"
-    [ "$n" -le 10 ] || { echo "$f: sprite.base has $n lines (max 10)"; return 1; }
-    # Count codepoints per line via python3 — bash ${#s} is byte-count.
+    [ "$n" = "4" ] || { echo "$f: sprite.base has $n lines (expected 4)"; return 1; }
     local overflow
     overflow="$(jq -r '.sprite.base[]' "$f" | python3 -c '
 import sys
 for i, line in enumerate(sys.stdin.read().splitlines(), 1):
-    if len(line) > 20:
-        print(f"line {i}: {len(line)} chars")
+    rendered = line.replace("{EYE}", "X")  # 1-char eye stand-in
+    if len(rendered) > 12:
+        print(f"line {i}: {len(rendered)} chars")
 ')"
     [ -z "$overflow" ] || { echo "$f: $overflow"; return 1; }
   done

@@ -169,9 +169,37 @@ render_stat_line() {
 
 # --- sprite + fallback ---------------------------------------------------
 
-# render_sprite_or_fallback <species_json_path> <rarity> [shiny=0]
+# Resolve a hat sprite by name from scripts/species/_hats.json. Returns the
+# sprite string on stdout; empty on miss. Caller decides what to do with
+# an empty return (render a blank reserved row).
+_render_hat_lookup() {
+  local hat_name="${1:-}"
+  [[ -z "$hat_name" ]] && return 0
+  local hats_dir="${BUDDY_SPECIES_DIR:-}"
+  if [[ -z "$hats_dir" ]]; then
+    # Walk up from this file's directory: scripts/lib/render.sh -> scripts/species
+    local render_dir
+    render_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 0
+    hats_dir="$render_dir/../species"
+  fi
+  local hats_file="$hats_dir/_hats.json"
+  [[ ! -f "$hats_file" ]] && return 0
+  jq -r --arg name "$hat_name" '.hats[$name] // ""' "$hats_file" 2>/dev/null
+}
+
+# render_sprite_or_fallback <species_json_path> <rarity> [shiny=0] [hat_name=""] [eye=""]
+#
+# Renders a 5-row portrait:
+#   Row 1: hat sprite (if hat_name provided and resolves) OR blank reserved row
+#   Rows 2-5: sprite.base content from the species JSON, with {EYE} markers
+#             substituted by the per-buddy eye glyph if provided
+#
+# The 5x12 grid is the shipped convention (see P4-4d). Species JSONs store
+# 4 face rows with {EYE} placeholders; both row 1 and the eye glyph are
+# composed at render time so accessories and per-buddy eye style can be
+# swapped without re-baking the sprite. Defaults to · if no eye is provided.
 render_sprite_or_fallback() {
-  local path="${1:-}" rarity="${2:-common}" shiny="${3:-0}"
+  local path="${1:-}" rarity="${2:-common}" shiny="${3:-0}" hat_name="${4:-}" eye="${5:-·}"
 
   local emoji="$_RENDER_FALLBACK_EMOJI"
   local sprite_lines=""
@@ -202,13 +230,30 @@ render_sprite_or_fallback() {
   [[ "$shiny" == "1" || "$shiny" == "true" ]] && sparkle="✨ "
 
   if [[ -n "$sprite_lines" ]]; then
-    # Truncate to 10 lines max (D-protect runaway sprites).
+    # Row 1: hat overlay, only emitted when a hat resolves. No blank
+    # placeholder row for hatless buddies — they render as a tight 4-row
+    # face. Hatted buddies render as 5 rows (hat + face). The visible
+    # height delta IS the "this buddy has a hat" signal.
+    if [[ -n "$hat_name" ]]; then
+      local hat_row
+      hat_row="$(_render_hat_lookup "$hat_name")"
+      if [[ -n "$hat_row" ]]; then
+        printf '%s%s\n' "$sparkle" "$(_render_color_line "$hat_row" "$rarity")"
+        sparkle=""  # sparkle only decorates the first emitted row
+      fi
+    fi
+
+    # Rows 2-N: face content with {EYE} substitution, truncated to 10 lines
+    # as a runaway guard. Bash 5.0+ treats `&` in the replacement string of
+    # ${var//pat/repl} as "the matched pattern" (sed-like). Escape the eye
+    # glyph defensively so an eye_pool containing `&` substitutes literally.
+    local eye_safe="${eye//&/\\&}"
     local count=0
-    local line
+    local line rendered
     while IFS= read -r line; do
       (( count >= 10 )) && break
-      printf '%s%s\n' "$sparkle" "$(_render_color_line "$line" "$rarity")"
-      sparkle=""  # only first line gets the sparkle prefix
+      rendered="${line//\{EYE\}/$eye_safe}"
+      printf '%s\n' "$(_render_color_line "$rendered" "$rarity")"
       count=$(( count + 1 ))
     done <<< "$sprite_lines"
     return 0
