@@ -97,7 +97,7 @@ Hook scripts and rendering are pure bash. State is JSON. No package manager, no 
 
 ## Roadmap
 
-See [docs/roadmap/README.md](docs/roadmap/README.md) for the full build plan. Shipped through P4-4 as of v1.0.0; P4-5 (reactive sprites + transcript-animation spike) is planned.
+See [docs/roadmap/README.md](docs/roadmap/README.md) for the full build plan. Shipped through P4-4 as of v0.0.9 (pre-1.0 — public smoke test); P4-5 (reactive sprites + transcript-animation spike) is planned next.
 
 ## License
 
