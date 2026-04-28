@@ -1,0 +1,20 @@
+{
+  "name": "claude-buddy",
+  "owner": {
+    "name": "Kneesal"
+  },
+  "description": "Marketplace for the buddy plugin — gacha-hatched, Tamagotchi-style coding companion for Claude Code.",
+  "plugins": [
+    {
+      "name": "buddy",
+      "source": "./",
+      "description": "Gacha-hatched, Tamagotchi-style evolving coding companion for Claude Code",
+      "version": "0.0.9",
+      "author": {
+        "name": "Kneesal"
+      },
+      "license": "MIT",
+      "repository": "https://github.com/Kneesal/claude-buddy"
+    }
+  ]
+}

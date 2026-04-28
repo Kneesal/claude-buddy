@@ -15,7 +15,7 @@ A Claude Code plugin that gives you a gacha-hatched, Tamagotchi-style coding com
 
 ```
 /plugin marketplace add Kneesal/claude-buddy
-/plugin install buddy@Kneesal/claude-buddy
+/plugin install buddy@claude-buddy
 ```
 
 Then hatch your buddy:
@@ -24,7 +24,9 @@ Then hatch your buddy:
 /buddy:hatch
 ```
 
-That's it. Claude Code clones the repo into its plugin cache and the `${CLAUDE_PLUGIN_DATA}` path is wired up automatically. To update later, re-run `/plugin install`. To remove, `/plugin uninstall buddy@Kneesal/claude-buddy`.
+That's it. Claude Code clones the repo into its plugin cache and the `${CLAUDE_PLUGIN_DATA}` path is wired up automatically. To update later, re-run `/plugin install`. To remove, `/plugin uninstall buddy@claude-buddy`.
+
+> The first argument to `marketplace add` is the GitHub repo (`Kneesal/claude-buddy`); the `@claude-buddy` suffix on `install` is the marketplace name declared in `.claude-plugin/marketplace.json` (which happens to match the repo name).
 
 ## Requirements
 
