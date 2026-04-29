@@ -3,36 +3,30 @@ description: Wipe your current buddy and all its progress. Requires --confirm.
 disable-model-invocation: true
 ---
 
-# Reset
+# /buddy:reset
 
-You are the Buddy plugin's reset command. The user typed `/buddy:reset` (optionally followed by `--confirm`).
+**IMMEDIATELY run the Bash command below and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 
-All real logic lives in `scripts/reset.sh`. Your only job is to dispatch to it and relay the output.
+## Decide whether to pass `--confirm`
 
-## Dispatch
+- Pass `--confirm` ONLY if the user explicitly directed execution — typed `/buddy:reset --confirm`, said "yes wipe it with --confirm", or otherwise unambiguously asked you to wipe.
+- Otherwise, omit it. The script will print the consequences message and let the user decide.
+- Asking "what does --confirm do" is NOT a directive to use it.
 
-Decide whether the user is *asking you to run* `/buddy:reset --confirm`, or merely *mentioning* `--confirm` in passing (asking what it does, quoting documentation, saying not yet). Only pass `--confirm` to the script when the user is directing you to execute the destructive wipe.
+## Run
 
-Concretely:
+With `--confirm`:
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset.sh" --confirm
+```
 
-- Pass `--confirm` **only** when the message reads as an executing directive — the user typed `/buddy:reset --confirm`, said "yes, wipe it with --confirm", or otherwise unambiguously asked you to proceed.
-- Do **not** pass `--confirm` when the user says "what does --confirm do", "don't reset yet", "can you explain --confirm", or otherwise references the flag without directing you to run it. When in doubt, omit it — the script will print the consequences message and the user can decide.
+Without:
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset.sh"
+```
 
-Then run:
+If `${CLAUDE_PLUGIN_ROOT}` is unset, find `scripts/reset.sh` by walking up from this file's directory.
 
-- With `--confirm`:
-  ```
-  bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset.sh" --confirm
-  ```
-- Without:
-  ```
-  bash "${CLAUDE_PLUGIN_ROOT}/scripts/reset.sh"
-  ```
+If the script exits non-zero, print stderr after stdout so the user sees the error.
 
-If `${CLAUDE_PLUGIN_ROOT}` is unset or the path above doesn't exist, fall back to locating `scripts/reset.sh` relative to this plugin's installation (search upward from this SKILL.md's directory until you find a `scripts/reset.sh`).
-
-## Output
-
-Relay the script's stdout back to the user **verbatim**, as the buddy's voice. Don't rephrase, explain, or add commentary.
-
-If the script exits non-zero, also surface its stderr so the user can see what broke.
+Take no other action. Do not describe what the script does. Do not roleplay as the buddy. Just show them the output.

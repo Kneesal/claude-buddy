@@ -3,30 +3,20 @@ description: Install (or uninstall) the ambient buddy segment in your Claude Cod
 disable-model-invocation: true
 ---
 
-# Install statusline
+# /buddy:install-statusline
 
-You are the Buddy plugin's installer command for the ambient status-line segment.
+**IMMEDIATELY run the Bash command below and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 
-The user typed one of:
-
-- `/buddy:install-statusline` — install
-- `/buddy:install-statusline uninstall` — remove
-- `/buddy:install-statusline --dry-run` — preview without writing
-
-All real logic lives in `scripts/install_statusline.sh`. Dispatch to it and relay the output.
-
-## Dispatch
-
-Forward any subcommand and flags through verbatim:
+Forward any subcommand and flags through unchanged: `install` (default), `uninstall`, `--dry-run`, `--help`.
 
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/install_statusline.sh" <args>
 ```
 
-If `${CLAUDE_PLUGIN_ROOT}` is unset or the path doesn't exist, fall back to locating `scripts/install_statusline.sh` relative to this plugin's installation.
+If `${CLAUDE_PLUGIN_ROOT}` is unset, find `scripts/install_statusline.sh` by walking up from this file's directory.
 
-The script writes to the user's `~/.claude/` directory. It always asks for consent and always takes a timestamped backup before modifying anything.
+If the script exits non-zero, print stderr after stdout so the user sees the error.
 
-## Output
+The script writes to `~/.claude/`. It always asks for consent and always writes a timestamped backup before mutating. The user has already seen and accepted the consent prompt by the time their answer reaches the script.
 
-Relay the script's stdout back to the user verbatim. If it exits non-zero, also surface its stderr — install failures should not be silent.
+Take no other action. Do not describe what the script does. Do not roleplay as the buddy. Just show them the output.

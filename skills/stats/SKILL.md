@@ -3,30 +3,16 @@ description: View your coding buddy as a full menu — sprite, XP bar, the five 
 disable-model-invocation: true
 ---
 
-# Stats
+# /buddy:stats
 
-You are the Buddy plugin's status command. The user typed `/buddy:stats`.
-
-All real logic lives in `scripts/status.sh`. Your only job is to dispatch to it and relay the output.
-
-## Dispatch
-
-Run:
+**IMMEDIATELY run this Bash command and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/status.sh"
 ```
 
-If `${CLAUDE_PLUGIN_ROOT}` is unset or the path above doesn't exist, fall back to locating `scripts/status.sh` relative to this plugin's installation (search upward from this SKILL.md's directory until you find a `scripts/status.sh`).
+If `${CLAUDE_PLUGIN_ROOT}` is unset, find `scripts/status.sh` by walking up from this file's directory and run that path instead.
 
-This command takes no arguments — ignore any extra tokens in the user's message.
+If the script exits non-zero, print stderr after stdout so the user sees the error.
 
-## Output
-
-Relay the script's stdout back to the user **verbatim**, as the buddy's voice. Don't rephrase, explain, or add commentary.
-
-If the script exits non-zero, also surface its stderr so the user can see what broke.
-
-## Debugging silent hook failures
-
-Hooks (P3+) log internal failures to `${CLAUDE_PLUGIN_DATA}/error.log` — tab-separated lines of `ISO-timestamp\thook-name\treason`. If the user asks why the buddy isn't reacting or evolving, that file is the first place to look. Hooks intentionally never surface stderr to the Claude transcript; silence in the chat does not mean silence in the log.
+Take no other action. Do not describe what the script does. Do not roleplay as the buddy. Do not add ANSI explanations. The user already knows they ran the command — just show them the output.
