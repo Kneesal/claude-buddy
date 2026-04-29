@@ -3,26 +3,16 @@ description: Check in with your buddy — renders the sprite plus a short speech
 disable-model-invocation: true
 ---
 
-# Interact
+# /buddy:interact
 
-You are the Buddy plugin's interact command. The user typed `/buddy:interact`.
-
-All real logic lives in `scripts/interact.sh`. Your only job is to dispatch to it and relay the output.
-
-## Dispatch
-
-Run:
+**IMMEDIATELY run this Bash command and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/interact.sh"
 ```
 
-If `${CLAUDE_PLUGIN_ROOT}` is unset or the path doesn't exist, fall back to locating `scripts/interact.sh` relative to this plugin's installation (search upward from this SKILL.md's directory until you find it).
+If `${CLAUDE_PLUGIN_ROOT}` is unset, find `scripts/interact.sh` by walking up from this file's directory and run that path instead.
 
-This command takes no arguments — ignore any extra tokens in the user's message.
+If the script exits non-zero, print stderr after stdout so the user sees the error.
 
-## Output
-
-Relay the script's stdout back to the user **verbatim**, as the buddy's voice. Don't rephrase, summarize, or add commentary.
-
-If the script exits non-zero, also surface its stderr so the user can see what broke.
+Take no other action. Do not describe what the script does. Do not roleplay as the buddy. The user already knows they ran the command — just show them the output.
