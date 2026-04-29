@@ -11,8 +11,10 @@ disable-model-invocation: true
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/interact.sh"
 ```
 
-If `${CLAUDE_PLUGIN_ROOT}` is unset, find `scripts/interact.sh` by walking up from this file's directory and run that path instead.
+If `${CLAUDE_PLUGIN_ROOT}` is unset or that path doesn't exist, find `scripts/interact.sh` by walking up from this file's directory and run that path instead.
 
 If the script exits non-zero, print stderr after stdout so the user sees the error.
 
-Take no other action. Do not describe what the script does. Do not roleplay as the buddy. The user already knows they ran the command — just show them the output.
+This command takes no arguments — ignore any extra tokens in the user's message.
+
+Do not describe what the script does. Do not roleplay as the buddy. Just show them the output.
