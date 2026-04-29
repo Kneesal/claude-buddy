@@ -311,29 +311,57 @@ _install_uninstall() {
 }
 
 _install_main() {
-  local cmd="${1:-install}"
-  shift 2>/dev/null || true
-  case "$cmd" in
+  # Pull global flags out of any position and forward only the subcommand
+  # + flags the inner functions understand. Lets users type the args in
+  # any order and lets the slash-command dispatch path recover when
+  # interactive consent isn't available (--yes bypass).
+  local subcmd=""
+  local -a passthrough=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y)
+        export BUDDY_INSTALL_ASSUME_YES=1
+        ;;
+      install|uninstall|--help|-h|help)
+        # Subcommand keywords. First one wins; ignore later duplicates.
+        [[ -z "$subcmd" ]] && subcmd="$arg"
+        ;;
+      --dry-run)
+        # Top-level synonym for `install --dry-run` when no subcommand was
+        # given. If install/uninstall was named, just forward through.
+        passthrough+=("--dry-run")
+        ;;
+      *)
+        echo "Unknown argument: $arg" >&2
+        echo "Usage: install-statusline.sh [install|uninstall] [--dry-run] [--yes|-y]" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  # Default to install when no subcommand was named.
+  [[ -z "$subcmd" ]] && subcmd="install"
+
+  case "$subcmd" in
     install)
-      _install_run "$@"
+      _install_run "${passthrough[@]}"
       ;;
     uninstall)
-      _install_uninstall "$@"
+      _install_uninstall "${passthrough[@]}"
       ;;
     --help|-h|help)
       cat <<EOF
-Usage: install-statusline.sh [install|uninstall] [--dry-run]
+Usage: install-statusline.sh [install|uninstall] [--dry-run] [--yes|-y]
 
   install      Patch ~/.claude/statusline-command.sh to include the buddy
-               segment. Asks for consent. Always backs up first.
+               segment. Asks for consent on stdin. Always backs up first.
   uninstall    Remove the buddy block. Always backs up first.
   --dry-run    Print the planned change; do not write.
+  --yes, -y    Skip the consent prompt. Required when invoked from a
+               slash-command dispatch (where stdin is empty), since
+               otherwise the consent prompt EOFs and the script cancels.
 EOF
-      ;;
-    *)
-      echo "Unknown subcommand: $cmd" >&2
-      echo "Usage: install-statusline.sh [install|uninstall] [--dry-run]" >&2
-      return 1
       ;;
   esac
 }

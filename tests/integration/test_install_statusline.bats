@@ -174,9 +174,57 @@ setup() {
   run --separate-stderr bash "$INSTALL_SH" --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"Usage:"* ]]
+  [[ "$output" == *"--yes"* ]]
 }
 
 @test "unknown subcommand exits non-zero" {
   run --separate-stderr bash "$INSTALL_SH" frobnicate
   [ "$status" -ne 0 ]
+}
+
+# ---------------------------------------------------------------
+# Top-level --dry-run and --yes synonyms (added after ce:review found
+# /buddy:install-statusline --dry-run failed with 'Unknown subcommand').
+# ---------------------------------------------------------------
+
+@test "install: top-level --dry-run is treated as install --dry-run" {
+  echo "#!/usr/bin/env bash" > "$HOME/.claude/statusline-command.sh"
+  local before
+  before="$(cat "$HOME/.claude/statusline-command.sh")"
+
+  run --separate-stderr bash "$INSTALL_SH" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Would append"* ]]
+  [ "$before" = "$(cat "$HOME/.claude/statusline-command.sh")" ]
+}
+
+@test "install: --yes flag bypasses interactive consent and writes the block" {
+  echo "#!/usr/bin/env bash" > "$HOME/.claude/statusline-command.sh"
+  unset BUDDY_INSTALL_ASSUME_YES
+
+  # Empty stdin emulates slash-command dispatch context — the consent
+  # prompt would EOF and cancel WITHOUT --yes. With --yes it must succeed.
+  run --separate-stderr bash -c 'bash "$0" install --yes </dev/null' "$INSTALL_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Installed"* ]]
+  grep -qF "# >>> buddy-plugin >>>" "$HOME/.claude/statusline-command.sh"
+}
+
+@test "install: --yes can appear before or after the subcommand" {
+  echo "#!/usr/bin/env bash" > "$HOME/.claude/statusline-command.sh"
+  unset BUDDY_INSTALL_ASSUME_YES
+
+  # --yes before subcommand
+  run --separate-stderr bash -c 'bash "$0" --yes install </dev/null' "$INSTALL_SH"
+  [ "$status" -eq 0 ]
+  grep -qF "# >>> buddy-plugin >>>" "$HOME/.claude/statusline-command.sh"
+}
+
+@test "install: short -y flag works as alias for --yes" {
+  echo "#!/usr/bin/env bash" > "$HOME/.claude/statusline-command.sh"
+  unset BUDDY_INSTALL_ASSUME_YES
+
+  run --separate-stderr bash -c 'bash "$0" install -y </dev/null' "$INSTALL_SH"
+  [ "$status" -eq 0 ]
+  grep -qF "# >>> buddy-plugin >>>" "$HOME/.claude/statusline-command.sh"
 }
