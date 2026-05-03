@@ -5,6 +5,8 @@ disable-model-invocation: true
 
 # /buddy:install-statusline
 
+> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/install_statusline.sh`). The hook whitelists subcommand+flag shapes lexically and forwards `--yes` past the stdin-EOF problem documented in `claude-code-slash-dispatch-stdin-eof-2026-04-29.md`. If you're reading this body, the hook didn't fire — pick the matching code block below by hand.
+
 **Run the Bash command below for the chosen subcommand and print its stdout verbatim.** No preamble, no summary, no commentary. The script's output IS the response.
 
 ## Decide the subcommand

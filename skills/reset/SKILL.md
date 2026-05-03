@@ -5,6 +5,8 @@ disable-model-invocation: true
 
 # /buddy:reset
 
+> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/reset.sh`). The hook applies a strict rule: `--confirm` is forwarded ONLY when the user's prompt is exactly `/buddy:reset --confirm` — extra tokens (e.g. `/buddy:reset what does --confirm do`) drop the flag automatically. If you (the model) are reading this body, the hook didn't fire and you must apply the directive-vs-mention rule below by hand. Reset is irreversibly destructive and writes no backup.
+
 **Run the Bash command below and print its stdout verbatim.** No preamble, no summary, no commentary. The script's output IS the response.
 
 ## First decide whether the user is directing a wipe

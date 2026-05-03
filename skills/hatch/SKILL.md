@@ -5,6 +5,8 @@ disable-model-invocation: true
 
 # /buddy:hatch
 
+> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/hatch.sh`). The hook applies a strict rule: `--confirm` is forwarded ONLY when the user's prompt is exactly `/buddy:hatch --confirm` — extra tokens (e.g. `/buddy:hatch what does --confirm do`) drop the flag automatically. If you (the model) are reading this body, the hook didn't fire and you must apply the directive-vs-mention rule below by hand.
+
 **Run the Bash command below and print its stdout verbatim.** No preamble, no summary, no commentary. The script's output IS the response.
 
 ## First decide whether the user is directing a reroll
