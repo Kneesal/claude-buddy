@@ -69,13 +69,20 @@ _main() {
   [[ -z "$output" ]] && return 0
 
   # Encode output as JSON; emit short-circuit response.
-  local json_reason
-  if ! json_reason="$(printf '%s' "$output" | jq -Rs '.' 2>/dev/null)"; then
-    hook_log_error "user-prompt-submit" "jq-encode-reason-failed"
+  #
+  # We use systemMessage (not reason) to avoid Claude Code's "Operation
+  # blocked by a hook" warning chrome that paints the reason text in a
+  # uniform yellow/gold and overrides our ANSI rarity colors. systemMessage
+  # carries content as a plain system-level chat message, preserving ANSI.
+  # decision:block is still set so the model never runs (api_ms = 0);
+  # reason is empty so no warning chrome surfaces.
+  local json_msg
+  if ! json_msg="$(printf '%s' "$output" | jq -Rs '.' 2>/dev/null)"; then
+    hook_log_error "user-prompt-submit" "jq-encode-message-failed"
     return 0
   fi
 
-  printf '{"decision":"block","reason":%s}' "$json_reason"
+  printf '{"decision":"block","reason":"","systemMessage":%s}' "$json_msg"
   return 0
 }
 

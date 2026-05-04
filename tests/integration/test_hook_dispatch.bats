@@ -40,7 +40,7 @@ _run_hook() {
   output="$(_run_hook '{"prompt":"/buddy:stats"}')"
   [ -n "$output" ]
   decision="$(printf '%s' "$output" | jq -r '.decision')"
-  reason="$(printf '%s' "$output" | jq -r '.reason')"
+  reason="$(printf '%s' "$output" | jq -r '.systemMessage')"
   [ "$decision" = "block" ]
   [[ "$reason" == *"Custard"* ]]
 }
@@ -48,7 +48,7 @@ _run_hook() {
 @test "hook: /buddy:hatch on no-buddy → reason carries hatch output" {
   output="$(printf '%s' '{"prompt":"/buddy:hatch"}' | BUDDY_RNG_SEED=42 bash "$HOOK_SH")"
   decision="$(printf '%s' "$output" | jq -r '.decision')"
-  reason="$(printf '%s' "$output" | jq -r '.reason')"
+  reason="$(printf '%s' "$output" | jq -r '.systemMessage')"
   [ "$decision" = "block" ]
   [[ "$reason" == Hatched* ]]
   [ -f "$CLAUDE_PLUGIN_DATA/buddy.json" ]
@@ -58,7 +58,7 @@ _run_hook() {
   _seed_hatch
   output="$(_run_hook '{"prompt":"/buddy:reset --confirm"}')"
   decision="$(printf '%s' "$output" | jq -r '.decision')"
-  reason="$(printf '%s' "$output" | jq -r '.reason')"
+  reason="$(printf '%s' "$output" | jq -r '.systemMessage')"
   [ "$decision" = "block" ]
   [[ "$reason" == *"Buddy reset"* ]]
   [ ! -f "$CLAUDE_PLUGIN_DATA/buddy.json" ]
@@ -117,7 +117,7 @@ _run_hook() {
   # render layer. Verify jq -Rs encoding survives the round-trip.
   _seed_hatch
   output="$(_run_hook '{"prompt":"/buddy:stats"}')"
-  reason="$(printf '%s' "$output" | jq -r '.reason' 2>/dev/null)"
+  reason="$(printf '%s' "$output" | jq -r '.systemMessage' 2>/dev/null)"
   # If jq -r succeeded, the JSON is well-formed; reason should be non-empty.
   [ -n "$reason" ]
   # ANSI escape (ESC) survived the round-trip.
