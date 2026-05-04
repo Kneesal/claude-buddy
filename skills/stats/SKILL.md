@@ -5,6 +5,8 @@ disable-model-invocation: true
 
 # /buddy:stats
 
+> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/status.sh`), which short-circuits the model and renders the buddy menu directly. If you (the model) are reading this body, the hook didn't fire — older Claude Code, hook disabled, or another short-circuit blocked it. Follow the imperative below to render the buddy via the Bash tool.
+
 **IMMEDIATELY run this Bash command and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 
 ```

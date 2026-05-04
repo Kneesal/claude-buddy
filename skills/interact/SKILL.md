@@ -5,6 +5,8 @@ disable-model-invocation: true
 
 # /buddy:interact
 
+> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/interact.sh`). If the hook fires, this body never reaches you. You're seeing it only when the hook didn't run.
+
 **IMMEDIATELY run this Bash command and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 
 ```
