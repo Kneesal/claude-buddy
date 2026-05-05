@@ -5,7 +5,21 @@ disable-model-invocation: true
 
 # /buddy:reset
 
-> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/reset.sh`). The hook applies a strict rule: `--confirm` is forwarded ONLY when the user's prompt is exactly `/buddy:reset --confirm` — extra tokens (e.g. `/buddy:reset what does --confirm do`) drop the flag automatically. If you (the model) are reading this body, the hook didn't fire and you must apply the directive-vs-mention rule below by hand. Reset is irreversibly destructive and writes no backup.
+## Primary path — print the additionalContext verbatim
+
+The buddy plugin's `UserPromptSubmit` hook has already run `scripts/dispatch.sh` for this prompt. The hook applied a strict lexical rule for `--confirm` (only the exact token `/buddy:reset --confirm` triggers a wipe; extra tokens like `/buddy:reset what does --confirm do` drop the flag automatically). The dispatcher's plain-Unicode output is in your context as `additionalContext`.
+
+**Print that text exactly as your response.** Critical rules:
+
+- DO NOT wrap in markdown code fences.
+- DO NOT add preamble, summary, commentary, or paraphrase.
+- DO NOT run any Bash tool. The output is already computed.
+- DO NOT roleplay as the buddy.
+- Emit byte-for-byte.
+
+If — and only if — there is no `additionalContext` from this hook in your context, fall through to the fallback path below. **Reset is irreversibly destructive and writes no backup — when in doubt, omit `--confirm`.**
+
+## Fallback path — run the Bash command yourself
 
 **Run the Bash command below and print its stdout verbatim.** No preamble, no summary, no commentary. The script's output IS the response.
 
