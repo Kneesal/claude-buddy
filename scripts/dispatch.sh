@@ -77,9 +77,29 @@ _dispatch_log_error() {
     >> "$data_dir/error.log" 2>/dev/null || true
 }
 
+# Strip SGR ANSI escape sequences (\e[...m, \e[...K) from stdin. Used to
+# produce the plain Unicode chat-relay output from the same script run that
+# wrote the ANSI version to /dev/tty.
+_dispatch_strip_ansi() {
+  sed -E $'s/\x1b\\[[0-9;]*[mK]//g'
+}
+
 # Run the named script, forward stdout, and append stderr after stdout when
 # exit code is non-zero (matches the SKILL.md "print stderr after stdout"
 # contract that we preserve for parity with the fallback path).
+#
+# Hybrid render (P4-7):
+#   - The script is run ONCE producing its normal ANSI-rich output.
+#   - That rich output is written to /dev/tty (best-effort — swallows errors
+#     when no TTY is attached, e.g. claude -p mode, headless smokes).
+#     Terminal users see full color + rarity hue immediately.
+#   - The same output is then ANSI-stripped and sent to stdout. This is the
+#     plain Unicode version that the UserPromptSubmit hook captures and
+#     injects as additionalContext for chat scrollback. No ANSI escapes
+#     means no code-fence triggers, and the model relays it byte-for-byte.
+#
+# Single-run (not double) is mandatory for destructive scripts (hatch
+# --confirm, reset --confirm) — running twice would mutate twice.
 _dispatch_exec() {
   local script="$1"; shift
   if [[ ! -f "$script" ]]; then
@@ -101,9 +121,21 @@ _dispatch_exec() {
   }
   bash "$script" "$@" >"$stdout_file" 2>"$stderr_file"
   rc=$?
-  cat "$stdout_file"
+
+  # Side-channel: write the ANSI-rich version to the user's terminal.
+  # `/dev/tty` may not exist or be openable in some environments
+  # (claude -p, headless CI, no controlling tty). Group the redirect so
+  # that an "open: No such device or address" error from the shell itself
+  # gets swallowed; the chat-side path below still works.
+  { cat "$stdout_file" > /dev/tty; } 2>/dev/null || true
   if (( rc != 0 )) && [[ -s "$stderr_file" ]]; then
-    cat "$stderr_file"
+    { cat "$stderr_file" > /dev/tty; } 2>/dev/null || true
+  fi
+
+  # Chat-side: ANSI-stripped plain Unicode for the additionalContext relay.
+  _dispatch_strip_ansi < "$stdout_file"
+  if (( rc != 0 )) && [[ -s "$stderr_file" ]]; then
+    _dispatch_strip_ansi < "$stderr_file"
   fi
   rm -f "$stdout_file" "$stderr_file"
   return 0

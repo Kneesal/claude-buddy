@@ -41,3 +41,4 @@ tests/output/
 # contain payload captures and machine paths not meant for the repo)
 .smoke/
 .smoke-run.sh
+.worktrees

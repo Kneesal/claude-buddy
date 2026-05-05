@@ -68,14 +68,33 @@ _main() {
   # Empty output → fall through to model + SKILL.md fallback path.
   [[ -z "$output" ]] && return 0
 
-  # Encode output as JSON; emit short-circuit response.
-  local json_reason
-  if ! json_reason="$(printf '%s' "$output" | jq -Rs '.' 2>/dev/null)"; then
-    hook_log_error "user-prompt-submit" "jq-encode-reason-failed"
+  # Encode output as JSON; inject as additionalContext (NOT decision:block).
+  #
+  # Why not decision:block: it stamps "Operation blocked by a hook" on the
+  # response and paints the text in a yellow warning color, overriding the
+  # ANSI rarity coloring. The systemMessage variant has the same chrome.
+  #
+  # Architecture (P4-7 hybrid render):
+  #   1. dispatch.sh wrote the ANSI-rich output to /dev/tty already
+  #      (terminal user sees full color sprite immediately).
+  #   2. dispatch.sh emitted ANSI-stripped plain Unicode on stdout — that's
+  #      the $output we have here. No ANSI escapes means no code-fence
+  #      triggers, and the model relays plain Unicode byte-for-byte (5/5
+  #      verbatim in the spike; matches dcastro12/claude-buddy-mcp's
+  #      proven-in-the-wild approach).
+  #   3. SKILL.md tells the model "print the additionalContext verbatim,
+  #      no code fences, no commentary."
+  #
+  # The model is back in the loop (api_ms > 0) so this is not 100%
+  # deterministic — but the relay reliability for plain Unicode is high
+  # enough that the no-chrome UX is worth it.
+  local json_msg
+  if ! json_msg="$(printf '%s' "$output" | jq -Rs '.' 2>/dev/null)"; then
+    hook_log_error "user-prompt-submit" "jq-encode-message-failed"
     return 0
   fi
 
-  printf '{"decision":"block","reason":%s}' "$json_reason"
+  printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}' "$json_msg"
   return 0
 }
 

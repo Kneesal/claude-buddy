@@ -5,7 +5,20 @@ disable-model-invocation: true
 
 # /buddy:install-statusline
 
-> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/install_statusline.sh`). The hook whitelists subcommand+flag shapes lexically and forwards `--yes` past the stdin-EOF problem documented in `claude-code-slash-dispatch-stdin-eof-2026-04-29.md`. If you're reading this body, the hook didn't fire — pick the matching code block below by hand.
+## Primary path — print the additionalContext verbatim
+
+The buddy plugin's `UserPromptSubmit` hook has already run `scripts/dispatch.sh` for this prompt. The hook whitelists subcommand+flag shapes lexically (`install`, `install --dry-run`, `install --yes`, `uninstall`, `uninstall --dry-run`, `--help`) and forwards `--yes` past the stdin-EOF problem. The dispatcher's plain-Unicode output is in your context as `additionalContext`.
+
+**Print that text exactly as your response.** Critical rules:
+
+- DO NOT wrap in markdown code fences.
+- DO NOT add preamble, summary, commentary, or paraphrase.
+- DO NOT run any Bash tool. The output is already computed.
+- Emit byte-for-byte.
+
+If — and only if — there is no `additionalContext` from this hook in your context, fall through to the fallback path below.
+
+## Fallback path — pick a Bash command yourself
 
 **Run the Bash command below for the chosen subcommand and print its stdout verbatim.** No preamble, no summary, no commentary. The script's output IS the response.
 
