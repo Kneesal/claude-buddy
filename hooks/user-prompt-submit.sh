@@ -68,21 +68,29 @@ _main() {
   # Empty output → fall through to model + SKILL.md fallback path.
   [[ -z "$output" ]] && return 0
 
-  # Encode output as JSON; emit short-circuit response.
+  # Encode output as JSON; inject as additionalContext (NOT decision:block).
   #
-  # We use systemMessage (not reason) to avoid Claude Code's "Operation
-  # blocked by a hook" warning chrome that paints the reason text in a
-  # uniform yellow/gold and overrides our ANSI rarity colors. systemMessage
-  # carries content as a plain system-level chat message, preserving ANSI.
-  # decision:block is still set so the model never runs (api_ms = 0);
-  # reason is empty so no warning chrome surfaces.
+  # Why not decision:block: it stamps "Operation blocked by a hook" on the
+  # response and paints the text in a yellow warning color, overriding the
+  # ANSI rarity coloring. Same problem with the systemMessage variant.
+  #
+  # Instead, we put the dispatcher's full rendered output in the model's
+  # context via hookSpecificOutput.additionalContext, and the SKILL.md
+  # tells the model to print that context verbatim. The model has the
+  # finished bytes in front of it — there's no tool-invocation decision
+  # to fail on, just a copy-the-text-above instruction. Verbatim relay
+  # tested at 5/5 in the spike (see solutions/userpromptsubmit-shortcircuit doc).
+  #
+  # The model still runs (api_ms > 0), so this is a regression on
+  # determinism vs decision:block — but a small one, and the UX win
+  # (no chrome, ANSI preserved) is the user-visible promise of P4-6.
   local json_msg
   if ! json_msg="$(printf '%s' "$output" | jq -Rs '.' 2>/dev/null)"; then
     hook_log_error "user-prompt-submit" "jq-encode-message-failed"
     return 0
   fi
 
-  printf '{"decision":"block","reason":"","systemMessage":%s}' "$json_msg"
+  printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}' "$json_msg"
   return 0
 }
 

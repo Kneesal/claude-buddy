@@ -5,7 +5,23 @@ disable-model-invocation: true
 
 # /buddy:stats
 
-> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/status.sh`), which short-circuits the model and renders the buddy menu directly. If you (the model) are reading this body, the hook didn't fire — older Claude Code, hook disabled, or another short-circuit blocked it. Follow the imperative below to render the buddy via the Bash tool.
+## Primary path — print the additionalContext verbatim
+
+The buddy plugin's `UserPromptSubmit` hook has already run `scripts/dispatch.sh` and placed the rendered buddy output in your context as `additionalContext` (see the system-reminder injected above this prompt).
+
+**Print that text exactly as your response.** Critical rules:
+
+- DO NOT wrap the output in markdown code fences (no triple backticks). The output already contains ANSI escape sequences, box-drawing characters, and bar glyphs; it is NOT code and must NOT be presented as a code block.
+- DO NOT strip ANSI escape codes (sequences like `\033[90m`, `\e[0m`, ESC-bracket-digits-m). They control colors. The user's terminal interprets them. They look like garbage in the source — preserve them anyway.
+- DO NOT add preamble, summary, commentary, or trailing decoration.
+- DO NOT paraphrase, reformat, re-indent, or "clean up" the layout.
+- DO NOT run any Bash tool. The output is already computed.
+- DO NOT roleplay as the buddy.
+- Emit the text byte-for-byte.
+
+If — and only if — there is no `additionalContext` from this hook in your context (older Claude Code, hooks disabled, hook crashed silently), fall through to the fallback below.
+
+## Fallback path — run the Bash command yourself
 
 **IMMEDIATELY run this Bash command and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 

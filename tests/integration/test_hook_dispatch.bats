@@ -35,32 +35,32 @@ _run_hook() {
 # Happy path — prompt matches /buddy:* → JSON short-circuit emitted.
 # =========================================================================
 
-@test "hook: /buddy:stats with active buddy → emits decision:block JSON" {
+_extract_context() {
+  printf '%s' "$1" | jq -r '.hookSpecificOutput.additionalContext // empty'
+}
+
+@test "hook: /buddy:stats with active buddy → emits hookSpecificOutput.additionalContext JSON" {
   _seed_hatch
   output="$(_run_hook '{"prompt":"/buddy:stats"}')"
   [ -n "$output" ]
-  decision="$(printf '%s' "$output" | jq -r '.decision')"
-  reason="$(printf '%s' "$output" | jq -r '.systemMessage')"
-  [ "$decision" = "block" ]
-  [[ "$reason" == *"Custard"* ]]
+  event_name="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.hookEventName')"
+  ctx="$(_extract_context "$output")"
+  [ "$event_name" = "UserPromptSubmit" ]
+  [[ "$ctx" == *"Custard"* ]]
 }
 
-@test "hook: /buddy:hatch on no-buddy → reason carries hatch output" {
+@test "hook: /buddy:hatch on no-buddy → context carries hatch output" {
   output="$(printf '%s' '{"prompt":"/buddy:hatch"}' | BUDDY_RNG_SEED=42 bash "$HOOK_SH")"
-  decision="$(printf '%s' "$output" | jq -r '.decision')"
-  reason="$(printf '%s' "$output" | jq -r '.systemMessage')"
-  [ "$decision" = "block" ]
-  [[ "$reason" == Hatched* ]]
+  ctx="$(_extract_context "$output")"
+  [[ "$ctx" == Hatched* ]]
   [ -f "$CLAUDE_PLUGIN_DATA/buddy.json" ]
 }
 
-@test "hook: /buddy:reset --confirm forwards to dispatch → reason carries wipe message" {
+@test "hook: /buddy:reset --confirm forwards to dispatch → context carries wipe message" {
   _seed_hatch
   output="$(_run_hook '{"prompt":"/buddy:reset --confirm"}')"
-  decision="$(printf '%s' "$output" | jq -r '.decision')"
-  reason="$(printf '%s' "$output" | jq -r '.systemMessage')"
-  [ "$decision" = "block" ]
-  [[ "$reason" == *"Buddy reset"* ]]
+  ctx="$(_extract_context "$output")"
+  [[ "$ctx" == *"Buddy reset"* ]]
   [ ! -f "$CLAUDE_PLUGIN_DATA/buddy.json" ]
 }
 
@@ -117,11 +117,11 @@ _run_hook() {
   # render layer. Verify jq -Rs encoding survives the round-trip.
   _seed_hatch
   output="$(_run_hook '{"prompt":"/buddy:stats"}')"
-  reason="$(printf '%s' "$output" | jq -r '.systemMessage' 2>/dev/null)"
-  # If jq -r succeeded, the JSON is well-formed; reason should be non-empty.
-  [ -n "$reason" ]
+  ctx="$(_extract_context "$output")"
+  # If jq -r succeeded, the JSON is well-formed; context should be non-empty.
+  [ -n "$ctx" ]
   # ANSI escape (ESC) survived the round-trip.
-  [[ "$reason" == *$'\e['* ]]
+  [[ "$ctx" == *$'\e['* ]]
 }
 
 @test "hook: empty stdin → exit 0 silent" {

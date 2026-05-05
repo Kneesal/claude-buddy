@@ -5,7 +5,23 @@ disable-model-invocation: true
 
 # /buddy:interact
 
-> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/interact.sh`). If the hook fires, this body never reaches you. You're seeing it only when the hook didn't run.
+## Primary path — print the additionalContext verbatim
+
+The buddy plugin's `UserPromptSubmit` hook has already run `scripts/dispatch.sh` and placed the rendered buddy speech-bubble output in your context as `additionalContext` (see the system-reminder injected above this prompt).
+
+**Print that text exactly as your response.** Critical rules:
+
+- DO NOT wrap the output in markdown code fences (no triple backticks). The output already contains ANSI escape sequences and box-drawing characters; it is NOT code and must NOT be presented as a code block.
+- DO NOT strip ANSI escape codes (sequences like `\033[90m`, `\e[0m`, ESC-bracket-digits-m). They control colors. The user's terminal interprets them. They look like garbage in the source — preserve them anyway.
+- DO NOT add preamble, summary, commentary, or trailing decoration.
+- DO NOT paraphrase, reformat, re-indent, or "clean up" the ASCII art.
+- DO NOT run any Bash tool. The output is already computed.
+- DO NOT roleplay as the buddy.
+- Emit the text byte-for-byte.
+
+If — and only if — there is no `additionalContext` from this hook in your context, fall through to the fallback below.
+
+## Fallback path — run the Bash command yourself
 
 **IMMEDIATELY run this Bash command and print its stdout verbatim. No preamble, no summary, no commentary. The script's output IS the response.**
 

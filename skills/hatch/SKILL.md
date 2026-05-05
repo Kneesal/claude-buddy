@@ -5,7 +5,23 @@ disable-model-invocation: true
 
 # /buddy:hatch
 
-> **Fallback path.** The canonical dispatch is the buddy plugin's `UserPromptSubmit` hook (`hooks/user-prompt-submit.sh` → `scripts/dispatch.sh` → `scripts/hatch.sh`). The hook applies a strict rule: `--confirm` is forwarded ONLY when the user's prompt is exactly `/buddy:hatch --confirm` — extra tokens (e.g. `/buddy:hatch what does --confirm do`) drop the flag automatically. If you (the model) are reading this body, the hook didn't fire and you must apply the directive-vs-mention rule below by hand.
+## Primary path — print the additionalContext verbatim
+
+The buddy plugin's `UserPromptSubmit` hook has already run `scripts/dispatch.sh` for this prompt. The hook applied a strict lexical rule for `--confirm` (only the exact token `/buddy:hatch --confirm` triggers a reroll; anything else gets the consequences message instead). The dispatcher's full output is in your context as `additionalContext` — see the system-reminder injected above this prompt.
+
+**Print that text exactly as your response.** Critical rules:
+
+- DO NOT wrap the output in markdown code fences (no triple backticks). The output already contains ANSI escape sequences and box-drawing characters; it is NOT code and must NOT be presented as a code block.
+- DO NOT strip ANSI escape codes (sequences like \033[90m, \e[0m, ESC-bracket-digits-m). They control colors. The user's terminal interprets them. They look like garbage in the source — preserve them anyway.
+- DO NOT add preamble, summary, commentary, or trailing decoration.
+- DO NOT paraphrase, reformat, re-indent, or "clean up" the layout.
+- DO NOT run any Bash tool. The output is already computed.
+- DO NOT roleplay as the buddy.
+- Emit the text byte-for-byte.
+
+If — and only if — there is no `additionalContext` from this hook in your context (older Claude Code, hook crashed silently), fall through to the fallback path below.
+
+## Fallback path — run the Bash command yourself
 
 **Run the Bash command below and print its stdout verbatim.** No preamble, no summary, no commentary. The script's output IS the response.
 
